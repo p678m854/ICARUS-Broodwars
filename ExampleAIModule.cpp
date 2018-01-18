@@ -1,6 +1,23 @@
+//TCP Headers
+#undef UNICODE
+
+#define WIN32_LEAN_AND_MEAN
+#define DEFAULT_BUFLEN 512
+#define DEFAULT_PORT "27015"
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <thread>
+//End TCP Headers
+//Start ExampleAIModule.cpp
 #include "ExampleAIModule.h"
 #include "BWEM/src/bwem.h" //BWEM header
 #include <iostream>
+
+#pragma comment (lib, "Ws2_32.lib")
 
 using namespace BWAPI;
 using namespace Filter;
@@ -10,6 +27,191 @@ using namespace Filter;
 //using namespace BWEM::BWAPI_ext;
 //using namespace BWEM::utils;
 
+//Start TCP Server (CHOI)
+//Theading/TCP Host Server
+std::thread* server;
+static void startServer(GameWrapper& bw);
+static void startServer(GameWrapper& bw)
+{
+	bw << "Starting server..." << std::endl;
+	int iResult;
+	WSADATA wsaData;
+
+	SOCKET ListenSocket = INVALID_SOCKET;
+	SOCKET ClientSocket = INVALID_SOCKET;
+
+	struct addrinfo *result = NULL;
+	struct addrinfo hints;
+
+	int iSendResult;
+	char recvbuf[DEFAULT_BUFLEN];
+	int recvbuflen = DEFAULT_BUFLEN;
+
+	//messages
+	char* preattend = "preattend";
+
+	//Initialize Winsock
+	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+	if (iResult != 0)
+	{
+		bw << "WSAStartup failed with error: " << iResult << std::endl;
+		return;
+	}
+
+	bw << "WSAStartup success!" << std::endl;
+
+	ZeroMemory(&hints, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+
+	//Resolve the server address and port
+	iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+
+	if (iResult != 0) {
+		bw << "getaddrinfo failed with error: " << iResult << std::endl;
+		WSACleanup();
+		return;
+	}
+
+	bw << "getaddrinfo success!" << std::endl;
+
+	//Create a SOCKET for connecting to server
+	ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+	if (ListenSocket == INVALID_SOCKET) {
+		bw << "socket failed with error: " << WSAGetLastError << std::endl;
+		freeaddrinfo(result);
+		WSACleanup();
+		return;
+	}
+
+	bw << "Listen socket success!" << std::endl;
+
+	//Setup the TCP listening socket
+	iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+	if (iResult == SOCKET_ERROR) {
+		bw << "bind failed with error: " << WSAGetLastError() << std::endl;
+		freeaddrinfo(result);
+		WSACleanup();
+		return;
+	}
+
+	bw << "Bind listen socket success!" << std::endl;
+
+	freeaddrinfo(result);
+
+	iResult = listen(ListenSocket, SOMAXCONN);
+	if (iResult == SOCKET_ERROR) {
+		bw << "listen failed with error: " << WSAGetLastError() << std::endl;
+		closesocket(ListenSocket);
+		WSACleanup();
+		return;
+	}
+
+	bw << "Listening for connections (blocking) ..." << std::endl;
+	//Accept a client socket
+	ClientSocket = accept(ListenSocket, NULL, NULL);
+
+	if (ClientSocket == INVALID_SOCKET) {
+		bw << "accept failed with error: " << WSAGetLastError() << std::endl;
+		closesocket(ListenSocket);
+		WSACleanup();
+		return;
+	}
+
+	bw << "Accepted client success!" << std::endl;
+	closesocket(ListenSocket); //No longer need server socket
+
+	//Recieve until the peer shuts down the connection
+	do
+	{
+		iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
+		if (iResult > 0) {
+			bw << "Bytes received: " << iResult << std::endl;
+			if (strcmp(preattend, recvbuf) == 0) {
+				//Iterate all the players in the game using a std:: iterator
+				Playerset players = bw->getPlayers();
+				std::string percepts = "(";
+				for (auto p : players) {
+					// Only print the player if they are not an observer
+					if (!p->isObserver()) {
+						bw << p->getName() << ", playing as " << p->getRace() << std::endl;
+					}
+					Unitset playerUnits = p->getUnits();
+					for (auto &u : playerUnits)
+					{
+						Position pos = u->getPosition();
+						if (u->getType().isMineralField())
+						{
+							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+						else if (u->getType().isAddon())
+						{
+							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+						else if (u->getType().isBeacon())
+						{
+							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+						else if (u->getType().isNeutral())
+						{
+							percepts += "(neutral neutral" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+						else if (u->getType().isBuilding())
+						{
+							percepts += "(building building" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+						else if (u->getType().isOrganic())
+						{
+							percepts += "(organic organic" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+						else if (u->getType().isPowerup())
+						{
+							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+						}
+					}
+				}
+				percepts += ")/n";
+				iSendResult = send(ClientSocket, percepts.c_str(), percepts.length(), 0);
+
+				if (iSendResult == SOCKET_ERROR) {
+					bw << "send failed with error: " << WSAGetLastError() << std::endl;
+					closesocket(ClientSocket);
+					WSACleanup();
+					return;
+				}
+			}
+
+			bw << "Bytes sent: " << iSendResult << std::endl;
+		}
+		else if (iResult == 0) {
+			bw << "Connection closing ... " << std::endl;
+		}
+		else
+		{
+			bw << "recv failed with error: " << WSAGetLastError() << std::endl;
+			closesocket(ClientSocket);
+			WSACleanup();
+			return;
+		}
+	} while (iResult > 0);
+	bw << "TCP Heartbeat" << std::endl;
+
+	iResult = shutdown(ClientSocket, SD_SEND);
+	if (iResult == SOCKET_ERROR) {
+		printf("shutdown failed with error: %d\n", WSAGetLastError());
+		closesocket(ClientSocket);
+		WSACleanup();
+		return;
+	}
+
+	//cleanup
+	closesocket(ClientSocket);
+	WSACleanup();
+}
+//End TCP server (CHOI)
+//BWEM Add-on
 namespace { auto & theMap = BWEM::Map::Instance(); }
 //End BWEM Add-on
 
@@ -19,7 +221,7 @@ void ExampleAIModule::onStart()
 	try
 	{
 		// Hello World!
-		Broodwar->sendText("Hello world!");
+		Broodwar->sendText("Initializing ICARUS connector ... ");//Choi modification of hello world
 
 		// Print the map name.
 		// BWAPI returns std::string when retrieving a string, don't forget to add .c_str() when printing!
@@ -56,9 +258,12 @@ void ExampleAIModule::onStart()
 		{
 			// Retrieve you and your enemy's races. enemy() will just return the first enemy.
 			// If you wish to deal with multiple enemies then you must use enemies().
-			if (Broodwar->enemy()) // First make sure there is an enemy
+			if (Broodwar->enemy()) { // First make sure there is an enemy
 				Broodwar << "The matchup is " << Broodwar->self()->getRace() << " vs " << Broodwar->enemy()->getRace() << std::endl;
-		
+			}
+			//Starting TCP server
+			server = new std::thread(startServer, std::ref(Broodwar));
+
 			//BWEM Add-on
 			Broodwar << "Map initialization..." << std::endl;
 
@@ -88,6 +293,8 @@ void ExampleAIModule::onEnd(bool isWinner)
   {
     // Log your win here!
   }
+  server->join();
+  delete server;
 }
 
 void ExampleAIModule::onFrame()
