@@ -1,10 +1,8 @@
 //TCP Headers
 #undef UNICODE
-
 #define WIN32_LEAN_AND_MEAN
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -23,7 +21,8 @@ using namespace BWAPI;
 using namespace Filter;
 
 //BWEM Add-on
-//using namespace BWEM;
+using namespace BWEM;
+namespace { auto & theMap = BWEM::Map::Instance(); }
 //using namespace BWEM::BWAPI_ext;
 //using namespace BWEM::utils;
 
@@ -172,6 +171,13 @@ static void startServer(GameWrapper& bw)
 						}
 					}
 				}
+				for (const BWEM::Area & area : theMap.Areas()) {
+					for (const ChokePoint * cp : area.ChokePoints()) {
+						std::pair<const Area *, const Area *> cp_areas;
+						cp_areas = cp->GetAreas();
+						percepts += "(ChokePoint ChokePoint" + std::to_string(cp->Index()) + " Area1 " + std::to_string(cp_areas.first->Id()) + " Area2" + std::to_string(cp_areas.second->Id()) + ")";
+					}
+				}
 				percepts += ")/n";
 				iSendResult = send(ClientSocket, percepts.c_str(), percepts.length(), 0);
 
@@ -211,9 +217,6 @@ static void startServer(GameWrapper& bw)
 	WSACleanup();
 }
 //End TCP server (CHOI)
-//BWEM Add-on
-namespace { auto & theMap = BWEM::Map::Instance(); }
-//End BWEM Add-on
 
 void ExampleAIModule::onStart()
 {
