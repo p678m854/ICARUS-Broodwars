@@ -171,11 +171,24 @@ static void startServer(GameWrapper& bw)
 						}
 					}
 				}
-				for (const BWEM::Area & area : theMap.Areas()) {
+				//Terrain Analyzer concepts
+				std::vector<int> cp_list = { 0 };//List of already done chokepoints (zero doesn't exist)
+				for (const BWEM::Area & area : theMap.Areas()) { //Iterate through the areas
 					for (const ChokePoint * cp : area.ChokePoints()) {
-						std::pair<const Area *, const Area *> cp_areas;
-						cp_areas = cp->GetAreas();
-						percepts += "(ChokePoint ChokePoint" + std::to_string(cp->Index()) + " Area1 " + std::to_string(cp_areas.first->Id()) + " Area2" + std::to_string(cp_areas.second->Id()) + ")";
+						int cp_index = cp->Index();//Current Index Number
+						bool cp_flag = true;       //Default ChokePoint isn't in list already done
+						for (int index : cp_list) {
+							if (index == cp_index) {//If CP is already done
+								cp_flag = false;    //Flag set to false
+								//break;              //Break out of list check
+							}
+						}
+						if (cp_flag == true) {//If new chokepoint
+							cp_list.push_back(cp_index);//Add to list
+							std::pair<const Area *, const Area *> cp_areas;
+							cp_areas = cp->GetAreas();
+							percepts += "(ChokePoint CP" + std::to_string(cp->Index()) + " A1 " + std::to_string(cp_areas.first->Id()) + " A2 " + std::to_string(cp_areas.second->Id()) + ")";
+						}
 					}
 				}
 				percepts += ")/n";
