@@ -140,34 +140,45 @@ static void startServer(GameWrapper& bw)
 					Unitset playerUnits = p->getUnits();
 					for (auto &u : playerUnits)
 					{
-						Position pos = u->getPosition();
+						Position pos = u->getPosition();//{X,Y}
+						TilePosition tpos = u->getTilePosition();
+						const BWEM::Area *u_area = theMap.GetNearestArea(tpos);
 						if (u->getType().isMineralField())
 						{
-							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) 
+								        + " area area" +std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isAddon())
 						{
-							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) 
+								        + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBeacon())
 						{
-							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) 
+								        + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isNeutral())
 						{
-							percepts += "(neutral neutral" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(neutral neutral" + std::to_string(u->getID()) + " name " + u->getType().getName() 
+								        + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBuilding())
 						{
-							percepts += "(building building" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(building building" + std::to_string(u->getID()) + " name " + u->getType().getName()
+								        + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) 
+								        + " area" + std::to_string(u_area->Id()) + " player " + p->getName() + ")\n";
 						}
 						else if (u->getType().isOrganic())
 						{
-							percepts += "(organic organic" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(organic organic" + std::to_string(u->getID()) + " name " + u->getType().getName() 
+								        + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) 
+								        + " area area" + std::to_string(u_area->Id()) + " player " + p->getName() + ")\n";
 						}
 						else if (u->getType().isPowerup())
 						{
-							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName() 
+								     + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 					}
 				}
@@ -180,14 +191,46 @@ static void startServer(GameWrapper& bw)
 						for (int index : cp_list) {
 							if (index == cp_index) {//If CP is already done
 								cp_flag = false;    //Flag set to false
-								//break;              //Break out of list check
+								break;              //Break out of list check
 							}
 						}
 						if (cp_flag == true) {//If new chokepoint
-							cp_list.push_back(cp_index);//Add to list
-							std::pair<const Area *, const Area *> cp_areas;
+							cp_list.push_back(cp_index);                   //Add to list
+							std::pair<const Area *, const Area *> cp_areas;//2 Areas that it connects
 							cp_areas = cp->GetAreas();
-							percepts += "(ChokePoint CP" + std::to_string(cp->Index()) + " A1 " + std::to_string(cp_areas.first->Id()) + " A2 " + std::to_string(cp_areas.second->Id()) + ")";
+							percepts += "(ChokePoint CP" + std::to_string(cp->Index()) + " A1 Area" + std::to_string(cp_areas.first->Id())
+								+ " A2 Area" + std::to_string(cp_areas.second->Id()) + " Access ";
+							if ((cp->IsPseudo()) == false) {
+								percepts += "Open)\n";                     //if chokepoint is open
+							}
+							else {										 //If chokepoint is blocked
+								Neutral *blocker = cp->BlockingNeutral();//Neutral that's blocking
+								Unit b_unit = blocker->Unit();           //Going from BWEM to BWAPI classes
+								UnitType b_UnitType = blocker->Type();
+								std::string b_ID = std::to_string(b_unit->getID());
+								if (blocker->IsMineral() != nullptr) {
+									percepts += " mineral";
+								}
+								else if (b_UnitType.isAddon()){
+									percepts += " add";
+								}
+								else if (b_UnitType.isBeacon()) {
+									percepts += " beacon";
+								}
+								else if (b_UnitType.isNeutral()) {
+									percepts += " neutral";
+								}
+								else if (b_UnitType.isBuilding()) {
+									percepts += " building";
+								}
+								else if (b_UnitType.isOrganic()) {
+									percepts += " organic";
+								}
+								else if (b_UnitType.isPowerup()) {
+									percepts += " powerup";
+								}
+								percepts += b_ID + ")\n";
+							}
 						}
 					}
 				}
