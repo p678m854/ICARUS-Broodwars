@@ -1,10 +1,8 @@
 //TCP Headers
 #undef UNICODE
-
 #define WIN32_LEAN_AND_MEAN
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -23,7 +21,8 @@ using namespace BWAPI;
 using namespace Filter;
 
 //BWEM Add-on
-//using namespace BWEM;
+using namespace BWEM;
+namespace { auto & theMap = BWEM::Map::Instance(); }
 //using namespace BWEM::BWAPI_ext;
 //using namespace BWEM::utils;
 
@@ -49,6 +48,7 @@ static void startServer(GameWrapper& bw)
 
 	//messages
 	char* preattend = "preattend";
+	char* moveto = "moveto";
 
 	//Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -123,16 +123,18 @@ static void startServer(GameWrapper& bw)
 	bw << "Accepted client success!" << std::endl;
 	closesocket(ListenSocket); //No longer need server socket
 
-	//Recieve until the peer shuts down the connection
+							   //Recieve until the peer shuts down the connection
 	do
 	{
 		iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
 		if (iResult > 0) {
 			bw << "Bytes received: " << iResult << std::endl;
+			// Preattend
 			if (strcmp(preattend, recvbuf) == 0) {
 				//Iterate all the players in the game using a std:: iterator
 				Playerset players = bw->getPlayers();
 				std::string percepts = "(";
+				std::vector<int> knownAreas;
 				for (auto p : players) {
 					// Only print the player if they are not an observer
 					if (!p->isObserver()) {
@@ -141,60 +143,159 @@ static void startServer(GameWrapper& bw)
 					Unitset playerUnits = p->getUnits();
 					for (auto &u : playerUnits)
 					{
-						Position pos = u->getPosition();
+						Position pos = u->getPosition();//{X,Y}
+						TilePosition tpos = u->getTilePosition();
+						const BWEM::Area *u_area = theMap.GetNearestArea(tpos);
+						if (knownAreas.empty()) {
+							knownAreas.push_back(u_area->Id());
+						}
+						else
+						{
+							bool newAreaFlag = true;
+							for (int area : knownAreas) {
+								if (area == (u_area->Id()))
+								{
+									newAreaFlag = false;
+									break;
+								}
+							}
+							if (newAreaFlag) {
+								knownAreas.push_back(u_area->Id());
+							}
+						}
 						if (u->getType().isMineralField())
 						{
-							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isAddon())
 						{
-							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBeacon())
 						{
-							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isNeutral())
 						{
-							percepts += "(neutral neutral" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(neutral " + u->getType().getName() + std::to_string(u->getID())
+								+ " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBuilding())
 						{
-							percepts += "(building building" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(building " + u->getType().getName() + std::to_string(u->getID())
+								+ " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+								+ " area" + std::to_string(u_area->Id()) + " player " + p->getName() + ")\n";
 						}
 						else if (u->getType().isOrganic())
 						{
-							percepts += "(organic organic" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
 						}
 						else if (u->getType().isPowerup())
 						{
-							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName()
+								+ " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
+						}
+					}
+				}
+				//Terrain Analyzer concepts
+				std::vector<int> cp_list = { 0 };//List of already done chokepoints (zero doesn't exist)
+				for (const BWEM::Area & area : theMap.Areas()) { //Iterate through the areas
+					for (const ChokePoint * cp : area.ChokePoints()) {
+						int cp_index = cp->Index();//Current Index Number
+						bool cp_flag = true;       //Default ChokePoint isn't in list already done
+						for (int index : cp_list) {
+							if (index == cp_index) {//If CP is already done
+								cp_flag = false;    //Flag set to false
+								break;              //Break out of list check
+							}
+						}
+						if (cp_flag == true) {//If new chokepoint
+							cp_list.push_back(cp_index);                   //Add to list
+							std::pair<const Area *, const Area *> cp_areas;//2 Areas that it connects
+							cp_areas = cp->GetAreas();
+							bool knownAreaFlag = false;
+							for (int area : knownAreas) {
+								if ((cp_areas.first->Id() == area) || (cp_areas.second->Id() == area)) {
+									knownAreaFlag = true;
+									break;
+								}
+							}
+							if (knownAreaFlag) {
+								percepts += "(ChokePoint CP" + std::to_string(cp->Index()) + " A1 Area" + std::to_string(cp_areas.first->Id())
+									+ " A2 Area" + std::to_string(cp_areas.second->Id()) + " Access ";
+								if ((cp->IsPseudo()) == false) {
+									percepts += "Open)\n";                     //if chokepoint is open
+								}
+								else {										 //If chokepoint is blocked
+									Neutral *blocker = cp->BlockingNeutral();//Neutral that's blocking
+									Unit b_unit = blocker->Unit();           //Going from BWEM to BWAPI classes
+									UnitType b_UnitType = blocker->Type();
+									std::string b_ID = std::to_string(b_unit->getID());
+									if (blocker->IsMineral() != nullptr) {
+										percepts += " mineral";
+									}
+									else if (b_UnitType.isAddon()) {
+										percepts += " add";
+									}
+									else if (b_UnitType.isBeacon()) {
+										percepts += " beacon";
+									}
+									else if (b_UnitType.isNeutral()) {
+										percepts += " neutral";
+									}
+									else if (b_UnitType.isBuilding()) {
+										percepts += " building";
+									}
+									else if (b_UnitType.isOrganic()) {
+										percepts += " organic";
+									}
+									else if (b_UnitType.isPowerup()) {
+										percepts += " powerup";
+									}
+									percepts += b_ID + ")\n";
+								}
+							}
 						}
 					}
 				}
 				percepts += ")/n";
 				iSendResult = send(ClientSocket, percepts.c_str(), percepts.length(), 0);
-
-				if (iSendResult == SOCKET_ERROR) {
-					bw << "send failed with error: " << WSAGetLastError() << std::endl;
-					closesocket(ClientSocket);
-					WSACleanup();
-					return;
-				}
+			}
+			//moveto
+			else if (strncmp(moveto, recvbuf, 6) == 0) {
+				bw << "Moveto Command Recieved" << std::endl;
+				char* confMT = "(Moveto Command Recieved)/n";
+				int confMT_len = strlen(confMT);
+				iSendResult = send(ClientSocket, confMT, confMT_len, 0);
+				recvbuf[0] = 0;
 			}
 
+			//Sending Failure
+			if (iSendResult == SOCKET_ERROR) {
+				bw << "send failed with error: " << WSAGetLastError() << std::endl;
+				closesocket(ClientSocket);
+				WSACleanup();
+				return;
+			}
+			else {}
+			// Processing commands from Icarus
 			bw << "Bytes sent: " << iSendResult << std::endl;
 		}
 		else if (iResult == 0) {
 			bw << "Connection closing ... " << std::endl;
 		}
-		else
+		//recv Error
+		else 
 		{
 			bw << "recv failed with error: " << WSAGetLastError() << std::endl;
 			closesocket(ClientSocket);
 			WSACleanup();
 			return;
-		}
+		} 
 	} while (iResult > 0);
 	bw << "TCP Heartbeat" << std::endl;
 
@@ -211,9 +312,6 @@ static void startServer(GameWrapper& bw)
 	WSACleanup();
 }
 //End TCP server (CHOI)
-//BWEM Add-on
-namespace { auto & theMap = BWEM::Map::Instance(); }
-//End BWEM Add-on
 
 void ExampleAIModule::onStart()
 {
@@ -223,8 +321,8 @@ void ExampleAIModule::onStart()
 		// Hello World!
 		Broodwar->sendText("Initializing ICARUS connector ... ");//Choi modification of hello world
 
-		// Print the map name.
-		// BWAPI returns std::string when retrieving a string, don't forget to add .c_str() when printing!
+																 // Print the map name.
+																 // BWAPI returns std::string when retrieving a string, don't forget to add .c_str() when printing!
 		Broodwar << "The map is " << Broodwar->mapName() << "!" << std::endl;
 
 		// Enable the UserInput flag, which allows us to control the bot and type messages.
@@ -288,18 +386,18 @@ void ExampleAIModule::onStart()
 
 void ExampleAIModule::onEnd(bool isWinner)
 {
-  // Called when the game ends
-  if ( isWinner )
-  {
-    // Log your win here!
-  }
-  server->join();
-  delete server;
+	// Called when the game ends
+	if (isWinner)
+	{
+		// Log your win here!
+	}
+	server->join();
+	delete server;
 }
 
 void ExampleAIModule::onFrame()
 {
-  // Called once every game frame
+	// Called once every game frame
 
 	//BWEM Add-on and try-catch
 	try {
@@ -358,7 +456,7 @@ void ExampleAIModule::onFrame()
 					}
 					else if (!u->getPowerUp())  // The worker cannot harvest anything if it
 					{                             // is carrying a powerup such as a flag
-					  // Harvest from the nearest mineral patch or gas refinery
+												  // Harvest from the nearest mineral patch or gas refinery
 						if (!u->gather(u->getClosestUnit(IsMineralField || IsRefinery)))
 						{
 							// If the call fails, then print the last error message
@@ -384,7 +482,7 @@ void ExampleAIModule::onFrame()
 						nullptr,    // condition
 						Broodwar->getLatencyFrames());  // frames to run
 
-// Retrieve the supply provider type in the case that we have run out of supplies
+														// Retrieve the supply provider type in the case that we have run out of supplies
 					UnitType supplyProviderType = u->getType().getRace().getSupplyProvider();
 					static int lastChecked = 0;
 
@@ -417,7 +515,7 @@ void ExampleAIModule::onFrame()
 										nullptr,  // condition
 										supplyProviderType.buildTime() + 100);  // frames to run
 
-				// Order the builder to construct the supply structure
+																				// Order the builder to construct the supply structure
 									supplyBuilder->build(supplyProviderType, targetBuildLocation);
 								}
 							}
@@ -446,44 +544,44 @@ void ExampleAIModule::onSendText(std::string text)
 	BWEM::utils::MapDrawer::ProcessCommand(text);
 	//End BWEM Add-on
 
-  // Send the text to the game if it is not being processed.
-  Broodwar->sendText("%s", text.c_str());
+	// Send the text to the game if it is not being processed.
+	Broodwar->sendText("%s", text.c_str());
 
 
-  // Make sure to use %s and pass the text as a parameter,
-  // otherwise you may run into problems when you use the %(percent) character!
+	// Make sure to use %s and pass the text as a parameter,
+	// otherwise you may run into problems when you use the %(percent) character!
 
 }
 
 void ExampleAIModule::onReceiveText(BWAPI::Player player, std::string text)
 {
-  // Parse the received text
-  Broodwar << player->getName() << " said \"" << text << "\"" << std::endl;
+	// Parse the received text
+	Broodwar << player->getName() << " said \"" << text << "\"" << std::endl;
 }
 
 void ExampleAIModule::onPlayerLeft(BWAPI::Player player)
 {
-  // Interact verbally with the other players in the game by
-  // announcing that the other player has left.
-  Broodwar->sendText("Goodbye %s!", player->getName().c_str());
+	// Interact verbally with the other players in the game by
+	// announcing that the other player has left.
+	Broodwar->sendText("Goodbye %s!", player->getName().c_str());
 }
 
 void ExampleAIModule::onNukeDetect(BWAPI::Position target)
 {
 
-  // Check if the target is a valid position
-  if ( target )
-  {
-    // if so, print the location of the nuclear strike target
-    Broodwar << "Nuclear Launch Detected at " << target << std::endl;
-  }
-  else 
-  {
-    // Otherwise, ask other players where the nuke is!
-    Broodwar->sendText("Where's the nuke?");
-  }
+	// Check if the target is a valid position
+	if (target)
+	{
+		// if so, print the location of the nuclear strike target
+		Broodwar << "Nuclear Launch Detected at " << target << std::endl;
+	}
+	else
+	{
+		// Otherwise, ask other players where the nuke is!
+		Broodwar->sendText("Where's the nuke?");
+	}
 
-  // You can also retrieve all the nuclear missile targets using Broodwar->getNukeDots()!
+	// You can also retrieve all the nuclear missile targets using Broodwar->getNukeDots()!
 }
 
 void ExampleAIModule::onUnitDiscover(BWAPI::Unit unit)
@@ -504,17 +602,17 @@ void ExampleAIModule::onUnitHide(BWAPI::Unit unit)
 
 void ExampleAIModule::onUnitCreate(BWAPI::Unit unit)
 {
-  if ( Broodwar->isReplay() )
-  {
-    // if we are in a replay, then we will print out the build order of the structures
-    if ( unit->getType().isBuilding() && !unit->getPlayer()->isNeutral() )
-    {
-      int seconds = Broodwar->getFrameCount()/24;
-      int minutes = seconds/60;
-      seconds %= 60;
-      Broodwar->sendText("%.2d:%.2d: %s creates a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
-    }
-  }
+	if (Broodwar->isReplay())
+	{
+		// if we are in a replay, then we will print out the build order of the structures
+		if (unit->getType().isBuilding() && !unit->getPlayer()->isNeutral())
+		{
+			int seconds = Broodwar->getFrameCount() / 24;
+			int minutes = seconds / 60;
+			seconds %= 60;
+			Broodwar->sendText("%.2d:%.2d: %s creates a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
+		}
+	}
 }
 
 void ExampleAIModule::onUnitDestroy(BWAPI::Unit unit)
@@ -534,17 +632,17 @@ void ExampleAIModule::onUnitDestroy(BWAPI::Unit unit)
 
 void ExampleAIModule::onUnitMorph(BWAPI::Unit unit)
 {
-  if ( Broodwar->isReplay() )
-  {
-    // if we are in a replay, then we will print out the build order of the structures
-    if ( unit->getType().isBuilding() && !unit->getPlayer()->isNeutral() )
-    {
-      int seconds = Broodwar->getFrameCount()/24;
-      int minutes = seconds/60;
-      seconds %= 60;
-      Broodwar->sendText("%.2d:%.2d: %s morphs a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
-    }
-  }
+	if (Broodwar->isReplay())
+	{
+		// if we are in a replay, then we will print out the build order of the structures
+		if (unit->getType().isBuilding() && !unit->getPlayer()->isNeutral())
+		{
+			int seconds = Broodwar->getFrameCount() / 24;
+			int minutes = seconds / 60;
+			seconds %= 60;
+			Broodwar->sendText("%.2d:%.2d: %s morphs a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
+		}
+	}
 }
 
 void ExampleAIModule::onUnitRenegade(BWAPI::Unit unit)
@@ -553,7 +651,7 @@ void ExampleAIModule::onUnitRenegade(BWAPI::Unit unit)
 
 void ExampleAIModule::onSaveGame(std::string gameName)
 {
-  Broodwar << "The game was saved to \"" << gameName << "\"" << std::endl;
+	Broodwar << "The game was saved to \"" << gameName << "\"" << std::endl;
 }
 
 void ExampleAIModule::onUnitComplete(BWAPI::Unit unit)
