@@ -271,7 +271,7 @@ static void startServer(GameWrapper& bw)
 				char* confMT = "(Moveto Command Recieved)/n";
 				int confMT_len = strlen(confMT);
 				iSendResult = send(ClientSocket, confMT, confMT_len, 0);
-				recvbuf[0] = 0;
+				memset(recvbuf, 0, sizeof(recvbuf));
 			}
 
 			//Sending Failure
