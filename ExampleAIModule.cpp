@@ -49,6 +49,8 @@ static void startServer(GameWrapper& bw)
 	//messages
 	char* preattend = "preattend";
 	char* moveto = "moveto";
+	char* space = " ";
+	char* endComm = "!";
 
 	//Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -267,7 +269,33 @@ static void startServer(GameWrapper& bw)
 			}
 			//moveto
 			else if (strncmp(moveto, recvbuf, 6) == 0) {
-				bw << "Moveto Command Recieved" << std::endl;
+				//Processing command
+				char targetName[30];
+				char posName[30];
+				char *Reader1 = strpbrk(recvbuf,space);
+				char *Reader2 = strpbrk(++Reader1,space);
+				int targetNameLen = Reader2 - Reader1;
+				std::cout << "Length of Target Name: " << targetNameLen << std::endl;
+				for (int i = 0; i < targetNameLen; i++)
+				{
+					targetName[i] = *Reader1++;
+				}
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+				int posNameLen = Reader2 - Reader1;
+				for (int i = 0; i < posNameLen; i++) {
+					posName[i] = *Reader1++;
+				}
+				bw << "(Moveto ";
+				for (int i = 0; i < targetNameLen; i++) {
+					bw << targetName[i];
+				} 
+				bw << " ";
+				for (int i = 0; i < posNameLen; i++) {
+					bw << posName[i];
+				}
+				bw << ") Command Recieved" << std::endl;
+				//Confirming on LISP Terminal
 				char* confMT = "(Moveto Command Recieved)/n";
 				int confMT_len = strlen(confMT);
 				iSendResult = send(ClientSocket, confMT, confMT_len, 0);
