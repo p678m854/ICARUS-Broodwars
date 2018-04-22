@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 #include <thread>
 //End TCP Headers
 //Start ExampleAIModule.cpp
@@ -46,11 +47,19 @@ static void startServer(GameWrapper& bw)
 	char recvbuf[DEFAULT_BUFLEN];
 	int recvbuflen = DEFAULT_BUFLEN;
 
-	//messages
+	//message
 	char* preattend = "preattend";
 	char* moveto = "moveto";
+	char* gather = "gather";
+	char mineral[] = "mineral";
+	char* mineral_ptr = mineral;
+	char vespene[] = "resource_vespene_geyser";
+	char* vespene_ptr = vespene;
 	char* space = " ";
 	char* endComm = "!";
+
+	const int mineral_l = sizeof(mineral)-2;
+	const int vespene_l = sizeof(vespene);
 
 	//Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -146,23 +155,23 @@ static void startServer(GameWrapper& bw)
 					for (auto &u : playerUnits)
 					{
 						Position pos = u->getPosition();//{X,Y}
-						TilePosition tpos = u->getTilePosition();
-						const BWEM::Area *u_area = theMap.GetNearestArea(tpos);
+						TilePosition tpos = u->getTilePosition(); //Get tile position of unit
+						const BWEM::Area *u_area = theMap.GetNearestArea(tpos); // Area of tile position
 						if (knownAreas.empty()) {
-							knownAreas.push_back(u_area->Id());
+							knownAreas.push_back(u_area->Id()); // No known area condition
 						}
 						else
 						{
-							bool newAreaFlag = true;
+							bool newAreaFlag = true; // Assumes new area
 							for (int area : knownAreas) {
 								if (area == (u_area->Id()))
 								{
-									newAreaFlag = false;
-									break;
+									newAreaFlag = false; // Found the area in previous list
+									break; // Breaks checking the known areas
 								}
 							}
 							if (newAreaFlag) {
-								knownAreas.push_back(u_area->Id());
+								knownAreas.push_back(u_area->Id()); // Adds new area to list
 							}
 						}
 						if (u->getType().isMineralField())
@@ -190,6 +199,11 @@ static void startServer(GameWrapper& bw)
 							percepts += "(building " + u->getType().getName() + std::to_string(u->getID())
 								+ " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
 								+ " area" + std::to_string(u_area->Id()) + " player " + p->getName() + ")\n";
+						}
+						else if (u->getType().isWorker())
+						{
+							percepts += "(worker " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
 						}
 						else if (u->getType().isOrganic())
 						{
@@ -266,8 +280,9 @@ static void startServer(GameWrapper& bw)
 				}
 				percepts += ")/n";
 				iSendResult = send(ClientSocket, percepts.c_str(), percepts.length(), 0);
+				memset(recvbuf, 0, sizeof(recvbuf));
 			}
-			//moveto
+			//moveto icarus command
 			else if (strncmp(moveto, recvbuf, 6) == 0) {
 				//Processing command
 				char targetName[30];
@@ -275,7 +290,7 @@ static void startServer(GameWrapper& bw)
 				char *Reader1 = strpbrk(recvbuf,space);
 				char *Reader2 = strpbrk(++Reader1,space);
 				int targetNameLen = Reader2 - Reader1;
-				std::cout << "Length of Target Name: " << targetNameLen << std::endl;
+				//std::cout << "Length of Target Name: " << targetNameLen << std::endl;
 				for (int i = 0; i < targetNameLen; i++)
 				{
 					targetName[i] = *Reader1++;
@@ -299,6 +314,163 @@ static void startServer(GameWrapper& bw)
 				char* confMT = "(Moveto Command Recieved)/n";
 				int confMT_len = strlen(confMT);
 				iSendResult = send(ClientSocket, confMT, confMT_len, 0);
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			//gather icarus command
+			else if (strncmp(gather, recvbuf, 6) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char resourceName[40];
+				char resourceID_c[3];//Hold numeric characters for ID
+				int resourceID_n = 0;//Numeric resource ID
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1-2;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+				int resourceNameLength = Reader2 - Reader1;
+
+				//Getting resource name (necessary to lowercase?)
+				for (int i = 0; i < resourceNameLength; i++) {
+					resourceName[i] = tolower(*Reader1++);
+				}
+
+				//Flags for finding workers and resources
+				bool workerFound = false;
+				bool resourceFound = false;
+				
+				// Debugging text
+				/*
+				bw << "Looking for: ";
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;*/
+				// Iterate through ICARUS's units
+				for (auto u : Broodwar->self()->getUnits()) {
+					// finding workers
+					if (u->getType().isWorker())
+					{
+						std::string w_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(w_name.c_str(),workerName,workerNameLength) == 0)
+						{
+							bw << "Found Worker Unit " << w_name << std::endl;
+							workerFound = true;
+							bw << "Looking for: ";
+							for (int i = 0; i < resourceNameLength; i++) {
+								bw << resourceName[i];
+							}
+							bw << std::endl;
+
+							bool mineral_f;
+							// Is resource a mineral?
+							if (strncmp(mineral_ptr, resourceName, mineral_l) == 0) {
+								mineral_f = true;
+							}
+							else {
+								mineral_f = false;
+							}
+							//Debugging text output:
+							/*bw << "MINERAL(?): ";
+							if (mineral_f) {
+								bw << "TRUE";
+							}
+							else {
+								bw << "FALSE";
+							}
+							bw << std::endl;*/
+							//Mineral Option
+							if(mineral_f)
+							{
+								int id_counter = 0;// Counter to see how long the ID at the end of resource is
+								while (isdigit(resourceName[mineral_l+id_counter+1]))
+								{
+									resourceID_c[id_counter] = resourceName[mineral_l + id_counter + 1];
+									id_counter++;
+								}
+								// Iterate through minerals in map
+								for (auto &r : Broodwar->getMinerals()){
+									int r_ID = r->getID(); //Get id of mineral
+									std::string r_name_ID = std::to_string(r_ID); //String of ID to compare to TCP result
+									int num_digits;//How many digits (base 10) are being checked
+									if (r_ID != 0) {
+										num_digits = ceil(log10(r_ID));//Get digits if ID isn't zero
+									}
+									else {
+										num_digits = 1;// if ID is 0
+									}
+									if (r_ID == 1 || r_ID == 10 || r_ID == 100) {
+										num_digits++;// Case where ceil() doesn't change anythin
+									}
+									char r_name_ID_c[3];
+									for (int i = 0; i < 3; i++) {
+										r_name_ID_c[i] = r_name_ID[i];
+									}
+									// if the number of digits in the resource id match the digits in the desired id
+									if (num_digits == id_counter) {
+										// check digits left to right
+										for (int i = 0; i < num_digits; i++) {
+											//If mismatch
+											if (r_name_ID[i] != resourceID_c[i]) {
+												break;//
+											}
+											// Mismatch isn't triggered and i has reached end of digits [shifted to 0 indexing]
+											else if (i == (num_digits-1)) {
+												resourceFound = true; //Found the resource
+												u->gather(r);//Execute the command (desired_worker -> gather(desired_resource)
+											}
+										}
+										// The resouce has been found
+										if (resourceFound) {
+											break; // Stop Iterating through the loop
+										}
+									}
+								}
+							}
+							// Vespene Gas Option
+							else if(strncmp(resourceName,vespene_ptr,vespene_l) == 0){
+								/*for (auto &r : Broodwar->getGeysers()) {
+									std::string r_name = r->getType().getName() + std::to_string(r->getID());
+									if (strncmp(r_name.c_str(), resourceName, resourceNameLength) == 0) {
+										resourceFound = true;
+										u->gather(r);
+										break;
+									}
+								}*/
+							}
+							//Debugging text
+							if (!resourceFound) {
+								bw << "Looked for: ";
+								for (int i = 0; i < resourceNameLength; i++) {
+									bw << resourceName[i];
+								}
+								bw << std::endl;
+								bw << "Resource was not found" << std::endl;
+							}
+							else {
+								bw << "Resource was found" << std::endl;
+							}
+							break;
+						}
+					}
+				}
+				// Debugging stuff:
+				if (!workerFound) {
+					bw << "Worker not found: "<< workerName << std::endl;
+					bw << "Listed Player Workers: " << std::endl;
+					for (auto &u : Broodwar->self()->getUnits()) {
+						if (u->getType().isWorker()) {
+							bw << "\t" << u->getType().getName() << std::to_string(u->getID()) << std::endl;
+						}
+					}
+				}
+				
+				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
 
@@ -471,6 +643,7 @@ void ExampleAIModule::onFrame()
 
 
 			// If the unit is a worker unit
+			/*
 			if (u->getType().isWorker())
 			{
 				// if our worker is idle
@@ -495,6 +668,7 @@ void ExampleAIModule::onFrame()
 				} // closure: if idle
 
 			}
+			
 			else if (u->getType().isResourceDepot()) // A resource depot is a Command Center, Nexus, or Hatchery
 			{
 
@@ -557,7 +731,7 @@ void ExampleAIModule::onFrame()
 				} // closure: failed to train idle unit
 
 			}
-
+			*/
 		} // closure: unit iterator
 	}
 	catch (const std::exception & e)
