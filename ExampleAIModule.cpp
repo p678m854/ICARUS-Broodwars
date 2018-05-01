@@ -47,19 +47,28 @@ static void startServer(GameWrapper& bw)
 	char recvbuf[DEFAULT_BUFLEN];
 	int recvbuflen = DEFAULT_BUFLEN;
 
-	//message
+	//messages
 	char* preattend = "preattend";
+	//Unit Commands
 	char* moveto = "moveto";
 	char* gather = "gather";
+	//Building Constructors
 	char* buildGasHarvester = "build_gas_harvester";
+	char* buildAdditionalSupply = "build_additional_supply";
+	char* buildGroundTroopBuilding = "build_ground_troop_building";
+	//Unit Constructors
 	char* makeWorker = "make_worker";
+	char* makeGroundTroop = "make_ground_troop";
+	//Resources
 	char mineral[] = "mineral";
 	char* mineral_ptr = mineral;
 	char vespene[] = "resource_vespene_geyser";
 	char* vespene_ptr = vespene;
+	//TCP deliminators
 	char* space = " ";
 	char* endComm = "!";
 
+	// Message Lengths
 	const int mineral_l = sizeof(mineral)-2;
 	const int vespene_l = sizeof(vespene);
 	const int buildGasHarvester_l = sizeof(buildGasHarvester) - 2;
@@ -186,19 +195,20 @@ static void startServer(GameWrapper& bw)
 								knownAreas.push_back(u_area->Id()); // Adds new area to list
 							}
 						}
+						//Match unit to type
 						if (u->getType().isMineralField())
 						{
-							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
 								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isAddon())
 						{
-							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
 								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBeacon())
 						{
-							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y)
+							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
 								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isNeutral())
@@ -210,7 +220,7 @@ static void startServer(GameWrapper& bw)
 						{
 							percepts += "(building " + u->getType().getName() + std::to_string(u->getID())
 								+ " player " + p->getName() + " area" + std::to_string(u_area->Id())
-								+ " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y);
+								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if ((Broodwar->self()->getName()) == (p->getName())) {
 								percepts += " assignment ";
 								if (u->isIdle()) {
@@ -241,7 +251,7 @@ static void startServer(GameWrapper& bw)
 						else if (u->getType().isRobotic())
 						{
 							percepts += "(robotic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
-								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y);
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if ((Broodwar->self()->getName()) == (p->getName())) {
 								percepts += " assignment ";
 								if (u->isIdle()) {
@@ -267,7 +277,7 @@ static void startServer(GameWrapper& bw)
 						else if (u->getType().isOrganic())
 						{
 							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
-								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y);
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if (Broodwar->self()->getName() == p->getName()) {
 								percepts += " assignment ";
 								if (u->isIdle()) {
@@ -283,6 +293,9 @@ static void startServer(GameWrapper& bw)
 											percepts += u->getBuildType().getName();
 										}
 									}
+									else if (u->isMorphing()) {
+										percepts += "morphing";
+									}
 									else {
 										percepts += "busy";
 									}
@@ -293,7 +306,7 @@ static void startServer(GameWrapper& bw)
 						else if (u->getType().isPowerup())
 						{
 							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName()
-								+ " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
+								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 					}
 				}
@@ -549,11 +562,16 @@ static void startServer(GameWrapper& bw)
 						}
 					}
 				}
-				
+				// Cleaning up pointers and arrays
+				delete Reader1;
+				delete Reader2;
+				delete[] workerName;
+				delete[] resourceID_c;
+				delete[] resourceName;
 				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
-			//Building Terran Refinary
+			//Building Refinary/Assimulator/Excavator
 			else if (strncmp(buildGasHarvester,recvbuf,19) == 0) {
 				//Setting up memory allocation and reading pointers
 				char workerName[30];
@@ -593,7 +611,7 @@ static void startServer(GameWrapper& bw)
 				}
 
 				// character arrays to strings
-				std::string workerName_s = workerName;
+				//std::string workerName_s = workerName;
 				std::string xPos_s = xPos_c;
 				std::string yPos_s = yPos_c;
 
@@ -601,15 +619,19 @@ static void startServer(GameWrapper& bw)
 				bw << "X: " + xPos_s << std::endl;
 				bw << "Y: " + yPos_s << std::endl;
 
+				// Generate desired Tile Position
 				std::string::size_type sz;
 				TilePosition futureBuildingPos(std::stoi(xPos_s,&sz), std::stoi(yPos_s,&sz));
 				bw << "TilePosition: " << futureBuildingPos << std::endl;
+				
+				//Preallocate a gas harvester building type
 				UnitType gasHarvester;
 
 				for (auto u : Broodwar->self()->getUnits()) {
 					if (u->getType().isWorker()) {
 						std::string u_name = u->getType().getName() + std::to_string(u->getID());
 						if (strncmp(u_name.c_str(),workerName,workerNameLength) == 0) {
+							//Determine Race Specific Building Unit Type
 							if (Broodwar->self()->getRace().getName() == "Terran")
 							{
 								gasHarvester = UnitType{ 110 }; //Terran_Refinary
@@ -631,12 +653,231 @@ static void startServer(GameWrapper& bw)
 							//u->build(gasHarvester);
 							break;
 						}
+						// deleting name string
+						u_name.clear();
 					}
 				}
-
+				// Cleaning up pointers, arrays, and strings
+				delete Reader1;
+				delete Reader2;
+				delete[] workerName;
+				delete[] xPos_c;
+				delete[] yPos_c;
+				xPos_s.clear();
+				yPos_s.clear();
 				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
+			// Building additional supply units (Terran_Supply_Depot/Protoss_Pylon/Zerg_Overlord)
+			else if (strncmp(buildAdditionalSupply, recvbuf, 23) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char xPos_c[10];
+				char yPos_c[10];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+
+				bw << "Worker for construction: " << std::endl;
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, space);
+
+				//Getting x tile position
+				int xPos_l = Reader2 - Reader1;
+				for (int i = 0; i < xPos_l; i++) {
+					xPos_c[i] = *Reader1++;
+				}
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+
+				//Getting y tile position
+				int yPos_l = Reader2 - Reader1;
+				for (int i = 0; i < yPos_l; i++) {
+					yPos_c[i] = *Reader1++;
+				}
+
+				// character arrays to strings
+				//std::string workerName_s = workerName;
+				std::string xPos_s = xPos_c;
+				std::string yPos_s = yPos_c;
+
+				// Giving confirmation tile markers
+				bw << "Position for Supply building" << std::endl;
+				bw << "X: " + xPos_s << std::endl;
+				bw << "Y: " + yPos_s << std::endl;
+
+				// Generate desired Tile Position
+				std::string::size_type sz;
+				TilePosition futureBuildingPos(std::stoi(xPos_s, &sz), std::stoi(yPos_s, &sz));
+				bw << "TilePosition: " << futureBuildingPos << std::endl;
+
+				//Preallocate a supply building type
+				UnitType supplyBuilding;
+				
+				for (auto u : Broodwar->self()->getUnits()) {
+					if (u->getType().isWorker() || (u->getType().getName() == "Zerg_Larva")) {
+						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(u_name.c_str(), workerName, workerNameLength) == 0) {
+							//Determine Race Specific Building Unit Type
+							if (Broodwar->self()->getRace().getName() == "Terran")
+							{
+								supplyBuilding = UnitType{ 109 }; //Terran_Supply_Depot
+							}
+							else if (Broodwar->self()->getRace().getName() == "Protoss") {
+								supplyBuilding = UnitType{ 156 }; //Protoss_Pylon
+							}
+							else if (Broodwar->self()->getRace().getName() == "Zerg") {
+								supplyBuilding = UnitType{ 42 }; //Zerg_Overlord
+							}
+							// Confirming worker and structure
+							bw << "Worker Found: " << u->getType().getName() + std::to_string(u->getID()) << std::endl;
+							bw << "Desired Structure: " << supplyBuilding.getName() << std::endl;
+							// Terran and Protoss construction
+							if (Broodwar->self()->getRace().getName() != "Zerg") {
+								if (u->build(supplyBuilding, futureBuildingPos)) {
+									bw << "Building being constructed" << std::endl;
+								}
+								else {
+									bw << "Command Failed to Execute" << std::endl;
+								}
+							}
+							// Zerg Construction
+							else {
+								if (u->morph(supplyBuilding)) {
+									bw << "Larva being morphed" << std::endl;
+								}
+								else {
+									bw << "Command Failed to Execute (2)" << std::endl;
+								}
+							}
+							break;
+						}
+						// deleting name string
+						u_name.clear();
+					}
+				}
+				// Cleaning up pointers, arrays, and strings
+				delete Reader1;
+				delete Reader2;
+				delete[] workerName;
+				delete[] xPos_c;
+				delete[] yPos_c;
+				xPos_s.clear();
+				yPos_s.clear();
+				// clearing the receiver buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Build unit to allow for basic ground troops (Terran_Barracks/Protoss_Warpgate/Zerg_Spawning_Pools)
+			else if (strncmp(buildGroundTroopBuilding, recvbuf, 27) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char xPos_c[10];
+				char yPos_c[10];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+
+				bw << "Worker for construction: " << std::endl;
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, space);
+
+				//Getting x tile position
+				int xPos_l = Reader2 - Reader1;
+				for (int i = 0; i < xPos_l; i++) {
+					xPos_c[i] = *Reader1++;
+				}
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+
+				//Getting y tile position
+				int yPos_l = Reader2 - Reader1;
+				for (int i = 0; i < yPos_l; i++) {
+					yPos_c[i] = *Reader1++;
+				}
+
+				// character arrays to strings
+				//std::string workerName_s = workerName;
+				std::string xPos_s = xPos_c;
+				std::string yPos_s = yPos_c;
+
+				// Giving Tile Position
+				bw << "Position for Ground Troop building" << std::endl;
+				bw << "X: " + xPos_s << std::endl;
+				bw << "Y: " + yPos_s << std::endl;
+
+				// Generate desired Tile Position
+				std::string::size_type sz;
+				TilePosition futureBuildingPos(std::stoi(xPos_s, &sz), std::stoi(yPos_s, &sz));
+				bw << "TilePosition: " << futureBuildingPos << std::endl;
+
+				//Preallocate a ground troop building type
+				UnitType groundTroopBuilding;
+				
+				for (auto u : Broodwar->self()->getUnits()) {
+					if (u->getType().isWorker()) {
+						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(u_name.c_str(), workerName, workerNameLength) == 0) {
+							//Determine Race Specific Building Unit Type
+							if (Broodwar->self()->getRace().getName() == "Terran")
+							{
+								groundTroopBuilding = UnitType{ 111 }; //Terran_Barracks
+							}
+							else if (Broodwar->self()->getRace().getName() == "Protoss") {
+								groundTroopBuilding = UnitType{ 160 }; //Protoss_Gateway
+							}
+							else if (Broodwar->self()->getRace().getName() == "Zerg") {
+								groundTroopBuilding = UnitType{ 142 }; //Zerg_Spawning_Pool
+							}
+							// Confirming Worker and Structure
+							bw << "Worker Found: " << u->getType().getName() + std::to_string(u->getID()) << std::endl;
+							bw << "Desired Structure: " << groundTroopBuilding.getName() << std::endl;
+							// Conditional is ordering build, with confirmation/denial messages
+							if (u->build(groundTroopBuilding, futureBuildingPos)) {
+								bw << "Building being constructed" << std::endl;
+							}
+							else {
+								bw << "Command Failed to Execute" << std::endl;
+							}
+							break;
+						}
+						// clearing unit name;
+						u_name.clear();
+					}
+				}
+				// Pointer array, string cleanup
+				delete Reader1;
+				delete Reader2;
+				delete[] xPos_c;
+				delete[] yPos_c;
+				delete[] workerName;
+				xPos_s.clear();
+				yPos_s.clear();
+				// clearing the receiver buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Make a worker unit (Terran_SCV/Protoss_Probe/Zerg_Drone)
 			else if (strncmp(makeWorker, recvbuf, 10) == 0) {
 				//Setting up memory allocation and reading pointers
 				char trainerName[30];
@@ -648,7 +889,9 @@ static void startServer(GameWrapper& bw)
 				for (int i = 0; i < trainerNameLength; i++) {
 					trainerName[i] = *Reader1++;
 				}
-
+				// Cleaning up pointers
+				delete Reader1;
+				delete Reader2;
 				bw << "Source of Worker: ";
 				for (int i = 0; i < trainerNameLength; i++) {
 					bw << trainerName[i];
@@ -669,11 +912,65 @@ static void startServer(GameWrapper& bw)
 				for (auto &u : Broodwar->self()->getUnits()) {
 					std::string u_name = u->getType().getName() + std::to_string(u->getID());
 					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
-						u->morph(workerType);
+						u->train(workerType);
 						bw << "Commanded worker to be trained" << std::endl;
 						break;
 					}
 				}
+				// Deleting character array
+				delete[] trainerName;
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Make a basic ground troop unit (Terran_Marine/Protoss_Zealot/Zerg_Zergling)
+			else if (strncmp(makeGroundTroop, recvbuf, 17) == 0) {
+				//Setting up memory allocation and reading pointers
+				char trainerName[30];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, endComm);
+
+				//Getting worker name (case sensitive)
+				int trainerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < trainerNameLength; i++) {
+					trainerName[i] = *Reader1++;
+				}
+
+				bw << "Source of Ground Troop: ";
+				for (int i = 0; i < trainerNameLength; i++) {
+					bw << trainerName[i];
+				}
+				bw << std::endl;
+
+				UnitType troopType;
+				if (Broodwar->self()->getRace().getName() == "Terran") {
+					troopType = UnitType{ 0 }; //Terran_Marine
+				}
+				else if (Broodwar->self()->getRace().getName() == "Protoss") {
+					troopType = UnitType{ 65 }; //Protoss_Zealot
+				}
+				else if (Broodwar->self()->getRace().getName() == "Zerg") {
+					troopType = UnitType{ 37 }; //Zerg_Zergling
+				}
+
+				bw << "Ground Troop Unit Selected: " << troopType.getName() << std::endl;
+
+				
+				for (auto &u : Broodwar->self()->getUnits()) {
+					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
+						if (u->getType().getName() == "Zerg") {
+							u->morph(troopType);
+						}
+						else {
+							u->train(troopType);
+						}
+						bw << "Commanded ground troop to be trained" << std::endl;
+						break;
+					}
+				}
+				// Cleanup
+				delete Reader1;
+				delete Reader2;
+				delete[] trainerName;
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
 
