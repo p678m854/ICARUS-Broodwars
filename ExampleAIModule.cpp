@@ -1,15 +1,14 @@
 //TCP Headers
 #undef UNICODE
-
 #define WIN32_LEAN_AND_MEAN
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
-
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 #include <thread>
 //End TCP Headers
 //Start ExampleAIModule.cpp
@@ -23,7 +22,8 @@ using namespace BWAPI;
 using namespace Filter;
 
 //BWEM Add-on
-//using namespace BWEM;
+using namespace BWEM;
+namespace { auto & theMap = BWEM::Map::Instance(); }
 //using namespace BWEM::BWAPI_ext;
 //using namespace BWEM::utils;
 
@@ -49,6 +49,30 @@ static void startServer(GameWrapper& bw)
 
 	//messages
 	char* preattend = "preattend";
+	//Unit Commands
+	char* moveto = "moveto";
+	char* gather = "gather";
+	//Building Constructors
+	char* buildGasHarvester = "build_gas_harvester";
+	char* buildAdditionalSupply = "build_additional_supply";
+	char* buildGroundTroopBuilding = "build_ground_troop_building";
+	//Unit Constructors
+	char* makeWorker = "make_worker";
+	char* makeGroundTroop = "make_ground_troop";
+	//Resources
+	char mineral[] = "mineral";
+	char* mineral_ptr = mineral;
+	char vespene[] = "resource_vespene_geyser";
+	char* vespene_ptr = vespene;
+	//TCP deliminators
+	char* space = " ";
+	char* endComm = "!";
+
+	// Message Lengths
+	const int mineral_l = sizeof(mineral)-2;
+	const int vespene_l = sizeof(vespene);
+	const int buildGasHarvester_l = sizeof(buildGasHarvester) - 2;
+	const int makeWorker_l = sizeof(makeWorker) - 2;
 
 	//Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -123,78 +147,855 @@ static void startServer(GameWrapper& bw)
 	bw << "Accepted client success!" << std::endl;
 	closesocket(ListenSocket); //No longer need server socket
 
-	//Recieve until the peer shuts down the connection
+							   //Recieve until the peer shuts down the connection
 	do
 	{
 		iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
 		if (iResult > 0) {
 			bw << "Bytes received: " << iResult << std::endl;
+			// Preattend
 			if (strcmp(preattend, recvbuf) == 0) {
 				//Iterate all the players in the game using a std:: iterator
 				Playerset players = bw->getPlayers();
 				std::string percepts = "(";
+				std::vector<int> knownAreas;
 				for (auto p : players) {
 					// Only print the player if they are not an observer
 					if (!p->isObserver()) {
 						bw << p->getName() << ", playing as " << p->getRace() << std::endl;
 					}
+					if (Broodwar->self()->getName() == p->getName()) {
+						percepts += "(self " + p->getName() + " race " + p->getRace().getName()
+							+ " minerals " + std::to_string(p->minerals())
+							+ " gas " + std::to_string(p->gas())
+							+ " supply-limit " + std::to_string(p->supplyTotal())
+							+ " supply-used " + std::to_string(p->supplyUsed()) + ")\n";
+					}
+
 					Unitset playerUnits = p->getUnits();
 					for (auto &u : playerUnits)
 					{
-						Position pos = u->getPosition();
+						Position pos = u->getPosition();//{X,Y}
+						TilePosition tpos = u->getTilePosition(); //Get tile position of unit
+						const BWEM::Area *u_area = theMap.GetNearestArea(tpos); // Area of tile position
+						if (knownAreas.empty()) {
+							knownAreas.push_back(u_area->Id()); // No known area condition
+						}
+						else
+						{
+							bool newAreaFlag = true; // Assumes new area
+							for (int area : knownAreas) {
+								if (area == (u_area->Id()))
+								{
+									newAreaFlag = false; // Found the area in previous list
+									break; // Breaks checking the known areas
+								}
+							}
+							if (newAreaFlag) {
+								knownAreas.push_back(u_area->Id()); // Adds new area to list
+							}
+						}
+						//Match unit to type
 						if (u->getType().isMineralField())
 						{
-							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
+								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isAddon())
 						{
-							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
+								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBeacon())
 						{
-							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
+								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isNeutral())
 						{
-							percepts += "(neutral neutral" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(neutral " + u->getType().getName() + std::to_string(u->getID())
+								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
 						else if (u->getType().isBuilding())
 						{
-							percepts += "(building building" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(building " + u->getType().getName() + std::to_string(u->getID())
+								+ " player " + p->getName() + " area" + std::to_string(u_area->Id())
+								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							if ((Broodwar->self()->getName()) == (p->getName())) {
+								percepts += " assignment ";
+								if (u->isIdle()) {
+									if(!u->isCompleted()){
+										percepts += "under-construction";
+									}
+									else {
+										percepts += "idle";
+									}
+								}
+								else if (u->isTraining()) {
+									percepts += "(";
+									auto t = u->getTrainingQueue();
+									for (int i = 0; i < t.size(); i++) {
+										percepts += t[i].getName();
+										if (i < t.size() - 1) {
+											percepts += " ";
+										}
+									}
+									percepts += ")";
+								}
+								else {
+									percepts += "busy";
+								}
+							}
+							percepts += ")\n";
+						}
+						else if (u->getType().isRobotic())
+						{
+							percepts += "(robotic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							if ((Broodwar->self()->getName()) == (p->getName())) {
+								percepts += " assignment ";
+								if (u->isIdle()) {
+									percepts += "idle";
+								}
+								else {
+									if (u->getType().isWorker()) {
+										if (u->getBuildType().getName() == "None") {
+											percepts += "gathering-resources";
+										}
+										else {
+											percepts += "constructing-";
+											percepts += u->getBuildType().getName();
+										}
+									}
+									else {
+										percepts += "busy";
+									}
+								}
+							}
+							percepts += ")\n";
 						}
 						else if (u->getType().isOrganic())
 						{
-							percepts += "(organic organic" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							if (Broodwar->self()->getName() == p->getName()) {
+								percepts += " assignment ";
+								if (u->isIdle()) {
+									percepts += "idle";
+								}
+								else {
+									if (u->getType().isWorker()) {
+										if (u->getBuildType().getName() == "None") {
+											percepts += "gathering-resources";
+										}
+										else {
+											percepts += "constructing-";
+											percepts += u->getBuildType().getName();
+										}
+									}
+									else if (u->isMorphing()) {
+										percepts += "morphing";
+									}
+									else {
+										percepts += "busy";
+									}
+								}
+							}
+							percepts += ")\n";
 						}
 						else if (u->getType().isPowerup())
 						{
-							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName() + " x " + std::to_string(pos.x) + " y " + std::to_string(pos.y) + ")\n";
+							percepts += "(powerup powerup" + std::to_string(u->getID()) + " name " + u->getType().getName()
+								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
+						}
+					}
+				}
+				//Terrain Analyzer concepts
+				std::vector<int> cp_list = { 0 };//List of already done chokepoints (zero doesn't exist)
+				for (const BWEM::Area & area : theMap.Areas()) { //Iterate through the areas
+					for (const ChokePoint * cp : area.ChokePoints()) {
+						int cp_index = cp->Index();//Current Index Number
+						bool cp_flag = true;       //Default ChokePoint isn't in list already done
+						for (int index : cp_list) {
+							if (index == cp_index) {//If CP is already done
+								cp_flag = false;    //Flag set to false
+								break;              //Break out of list check
+							}
+						}
+						if (cp_flag == true) {//If new chokepoint
+							cp_list.push_back(cp_index);                   //Add to list
+							std::pair<const Area *, const Area *> cp_areas;//2 Areas that it connects
+							cp_areas = cp->GetAreas();
+							bool knownAreaFlag = false;
+							for (int area : knownAreas) {
+								if ((cp_areas.first->Id() == area) || (cp_areas.second->Id() == area)) {
+									knownAreaFlag = true;
+									break;
+								}
+							}
+							if (knownAreaFlag) {
+								percepts += "(ChokePoint CP" + std::to_string(cp->Index()) + " A1 Area" + std::to_string(cp_areas.first->Id())
+									+ " A2 Area" + std::to_string(cp_areas.second->Id()) + " Access ";
+								if ((cp->IsPseudo()) == false) {
+									percepts += "Open)\n";                     //if chokepoint is open
+								}
+								else {										 //If chokepoint is blocked
+									Neutral *blocker = cp->BlockingNeutral();//Neutral that's blocking
+									Unit b_unit = blocker->Unit();           //Going from BWEM to BWAPI classes
+									UnitType b_UnitType = blocker->Type();
+									std::string b_ID = std::to_string(b_unit->getID());
+									if (blocker->IsMineral() != nullptr) {
+										percepts += " mineral";
+									}
+									else if (b_UnitType.isAddon()) {
+										percepts += " add";
+									}
+									else if (b_UnitType.isBeacon()) {
+										percepts += " beacon";
+									}
+									else if (b_UnitType.isNeutral()) {
+										percepts += " neutral";
+									}
+									else if (b_UnitType.isBuilding()) {
+										percepts += " building";
+									}
+									else if (b_UnitType.isOrganic()) {
+										percepts += " organic";
+									}
+									else if (b_UnitType.isPowerup()) {
+										percepts += " powerup";
+									}
+									percepts += b_ID + ")\n";
+								}
+							}
 						}
 					}
 				}
 				percepts += ")/n";
 				iSendResult = send(ClientSocket, percepts.c_str(), percepts.length(), 0);
-
-				if (iSendResult == SOCKET_ERROR) {
-					bw << "send failed with error: " << WSAGetLastError() << std::endl;
-					closesocket(ClientSocket);
-					WSACleanup();
-					return;
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			//moveto icarus command
+			else if (strncmp(moveto, recvbuf, 6) == 0) {
+				//Processing command
+				char targetName[30];
+				char posName[30];
+				char *Reader1 = strpbrk(recvbuf,space);
+				char *Reader2 = strpbrk(++Reader1,space);
+				int targetNameLen = Reader2 - Reader1;
+				//std::cout << "Length of Target Name: " << targetNameLen << std::endl;
+				for (int i = 0; i < targetNameLen; i++)
+				{
+					targetName[i] = *Reader1++;
 				}
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+				int posNameLen = Reader2 - Reader1;
+				for (int i = 0; i < posNameLen; i++) {
+					posName[i] = *Reader1++;
+				}
+				bw << "(Moveto ";
+				for (int i = 0; i < targetNameLen; i++) {
+					bw << targetName[i];
+				} 
+				bw << " ";
+				for (int i = 0; i < posNameLen; i++) {
+					bw << posName[i];
+				}
+				bw << ") Command Recieved" << std::endl;
+				//Confirming on LISP Terminal
+				char* confMT = "(Moveto Command Recieved)/n";
+				int confMT_len = strlen(confMT);
+				iSendResult = send(ClientSocket, confMT, confMT_len, 0);
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			//gather icarus command
+			else if (strncmp(gather, recvbuf, 6) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char resourceName[40];
+				char resourceID_c[3];//Hold numeric characters for ID
+				int resourceID_n = 0;//Numeric resource ID
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1-2;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+				int resourceNameLength = Reader2 - Reader1;
+
+				//Getting resource name (necessary to lowercase?)
+				for (int i = 0; i < resourceNameLength; i++) {
+					resourceName[i] = tolower(*Reader1++);
+				}
+
+				//Flags for finding workers and resources
+				bool workerFound = false;
+				bool resourceFound = false;
+				
+				// Debugging text
+				/*
+				bw << "Looking for: ";
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;*/
+				// Iterate through ICARUS's units
+				for (auto u : Broodwar->self()->getUnits()) {
+					// finding workers
+					if (u->getType().isWorker())
+					{
+						std::string w_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(w_name.c_str(),workerName,workerNameLength) == 0)
+						{
+							bw << "Found Worker Unit " << w_name << std::endl;
+							workerFound = true;
+							bw << "Looking for: ";
+							for (int i = 0; i < resourceNameLength; i++) {
+								bw << resourceName[i];
+							}
+							bw << std::endl;
+
+							bool mineral_f;
+							// Is resource a mineral?
+							if (strncmp(mineral_ptr, resourceName, mineral_l) == 0) {
+								mineral_f = true;
+							}
+							else {
+								mineral_f = false;
+							}
+							//Debugging text output:
+							/*bw << "MINERAL(?): ";
+							if (mineral_f) {
+								bw << "TRUE";
+							}
+							else {
+								bw << "FALSE";
+							}
+							bw << std::endl;*/
+							//Mineral Option
+							if(mineral_f)
+							{
+								int id_counter = 0;// Counter to see how long the ID at the end of resource is
+								while (isdigit(resourceName[mineral_l+id_counter+1]))
+								{
+									resourceID_c[id_counter] = resourceName[mineral_l + id_counter + 1];
+									id_counter++;
+								}
+								// Iterate through minerals in map
+								for (auto &r : Broodwar->getMinerals()){
+									int r_ID = r->getID(); //Get id of mineral
+									std::string r_name_ID = std::to_string(r_ID); //String of ID to compare to TCP result
+									int num_digits;//How many digits (base 10) are being checked
+									if (r_ID != 0) {
+										num_digits = ceil(log10(r_ID));//Get digits if ID isn't zero
+									}
+									else {
+										num_digits = 1;// if ID is 0
+									}
+									if (r_ID == 1 || r_ID == 10 || r_ID == 100) {
+										num_digits++;// Case where ceil() doesn't change anythin
+									}
+									char r_name_ID_c[3];
+									for (int i = 0; i < 3; i++) {
+										r_name_ID_c[i] = r_name_ID[i];
+									}
+									// if the number of digits in the resource id match the digits in the desired id
+									if (num_digits == id_counter) {
+										// check digits left to right
+										for (int i = 0; i < num_digits; i++) {
+											//If mismatch
+											if (r_name_ID[i] != resourceID_c[i]) {
+												break;//
+											}
+											// Mismatch isn't triggered and i has reached end of digits [shifted to 0 indexing]
+											else if (i == (num_digits-1)) {
+												resourceFound = true; //Found the resource
+												u->gather(r);//Execute the command (desired_worker -> gather(desired_resource)
+											}
+										}
+										// The resouce has been found
+										if (resourceFound) {
+											break; // Stop Iterating through the loop
+										}
+									}
+								}
+							}
+							// Vespene Gas Option
+							else if(strncmp(resourceName,vespene_ptr,vespene_l) == 0){
+								/*for (auto &r : Broodwar->getGeysers()) {
+									std::string r_name = r->getType().getName() + std::to_string(r->getID());
+									if (strncmp(r_name.c_str(), resourceName, resourceNameLength) == 0) {
+										resourceFound = true;
+										u->gather(r);
+										break;
+									}
+								}*/
+							}
+							//Debugging text
+							if (!resourceFound) {
+								bw << "Looked for: ";
+								for (int i = 0; i < resourceNameLength; i++) {
+									bw << resourceName[i];
+								}
+								bw << std::endl;
+								bw << "Resource was not found" << std::endl;
+							}
+							else {
+								bw << "Resource was found" << std::endl;
+							}
+							break;
+						}
+					}
+				}
+				// Debugging stuff:
+				if (!workerFound) {
+					bw << "Worker not found: "<< workerName << std::endl;
+					bw << "Listed Player Workers: " << std::endl;
+					for (auto &u : Broodwar->self()->getUnits()) {
+						if (u->getType().isWorker()) {
+							bw << "\t" << u->getType().getName() << std::to_string(u->getID()) << std::endl;
+						}
+					}
+				}
+				// Cleaning up pointers and arrays
+				delete Reader1;
+				delete Reader2;
+				delete[] workerName;
+				delete[] resourceID_c;
+				delete[] resourceName;
+				// clearing the receiver buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			//Building Refinary/Assimulator/Excavator
+			else if (strncmp(buildGasHarvester,recvbuf,19) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char xPos_c[10];
+				char yPos_c[10];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+
+				bw << "Worker for construction: " << std::endl;
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;
+				
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, space);
+				
+				//Getting x tile position
+				int xPos_l = Reader2 - Reader1;
+				for (int i = 0; i < xPos_l; i++) {
+					xPos_c[i] = *Reader1++;
+				}
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+
+				//Getting y tile position
+				int yPos_l = Reader2 - Reader1;
+				for (int i = 0; i < yPos_l; i++) {
+					yPos_c[i] = *Reader1++;
+				}
+
+				// character arrays to strings
+				//std::string workerName_s = workerName;
+				std::string xPos_s = xPos_c;
+				std::string yPos_s = yPos_c;
+
+				bw << "Position for Gas Harvesting building" << std::endl;
+				bw << "X: " + xPos_s << std::endl;
+				bw << "Y: " + yPos_s << std::endl;
+
+				// Generate desired Tile Position
+				std::string::size_type sz;
+				TilePosition futureBuildingPos(std::stoi(xPos_s,&sz), std::stoi(yPos_s,&sz));
+				bw << "TilePosition: " << futureBuildingPos << std::endl;
+				
+				//Preallocate a gas harvester building type
+				UnitType gasHarvester;
+
+				for (auto u : Broodwar->self()->getUnits()) {
+					if (u->getType().isWorker()) {
+						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(u_name.c_str(),workerName,workerNameLength) == 0) {
+							//Determine Race Specific Building Unit Type
+							if (Broodwar->self()->getRace().getName() == "Terran")
+							{
+								gasHarvester = UnitType{ 110 }; //Terran_Refinary
+							}
+							else if (Broodwar->self()->getRace().getName() == "Protoss") {
+								gasHarvester = UnitType{ 157 }; //Protoss_Assimilator
+							}
+							else if (Broodwar->self()->getRace().getName() == "Zerg") {
+								gasHarvester = UnitType{ 149 }; //Zerg_Extractor
+							}
+							bw << "Worker Found: " << u->getType().getName() + std::to_string(u->getID()) << std::endl;
+							bw << "Desired Structure: " << gasHarvester.getName() << std::endl;
+							if (u->build(gasHarvester, futureBuildingPos)) {
+								bw << "Building being constructed" << std::endl;
+							}
+							else {
+								bw << "Command Failed to Execute" << std::endl;
+							}
+							//u->build(gasHarvester);
+							break;
+						}
+						// deleting name string
+						u_name.clear();
+					}
+				}
+				// Cleaning up pointers, arrays, and strings
+				delete Reader1;
+				delete Reader2;
+				delete[] workerName;
+				delete[] xPos_c;
+				delete[] yPos_c;
+				xPos_s.clear();
+				yPos_s.clear();
+				// clearing the receiver buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Building additional supply units (Terran_Supply_Depot/Protoss_Pylon/Zerg_Overlord)
+			else if (strncmp(buildAdditionalSupply, recvbuf, 23) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char xPos_c[10];
+				char yPos_c[10];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+
+				bw << "Worker for construction: " << std::endl;
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, space);
+
+				//Getting x tile position
+				int xPos_l = Reader2 - Reader1;
+				for (int i = 0; i < xPos_l; i++) {
+					xPos_c[i] = *Reader1++;
+				}
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+
+				//Getting y tile position
+				int yPos_l = Reader2 - Reader1;
+				for (int i = 0; i < yPos_l; i++) {
+					yPos_c[i] = *Reader1++;
+				}
+
+				// character arrays to strings
+				//std::string workerName_s = workerName;
+				std::string xPos_s = xPos_c;
+				std::string yPos_s = yPos_c;
+
+				// Giving confirmation tile markers
+				bw << "Position for Supply building" << std::endl;
+				bw << "X: " + xPos_s << std::endl;
+				bw << "Y: " + yPos_s << std::endl;
+
+				// Generate desired Tile Position
+				std::string::size_type sz;
+				TilePosition futureBuildingPos(std::stoi(xPos_s, &sz), std::stoi(yPos_s, &sz));
+				bw << "TilePosition: " << futureBuildingPos << std::endl;
+
+				//Preallocate a supply building type
+				UnitType supplyBuilding;
+				
+				for (auto u : Broodwar->self()->getUnits()) {
+					if (u->getType().isWorker() || (u->getType().getName() == "Zerg_Larva")) {
+						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(u_name.c_str(), workerName, workerNameLength) == 0) {
+							//Determine Race Specific Building Unit Type
+							if (Broodwar->self()->getRace().getName() == "Terran")
+							{
+								supplyBuilding = UnitType{ 109 }; //Terran_Supply_Depot
+							}
+							else if (Broodwar->self()->getRace().getName() == "Protoss") {
+								supplyBuilding = UnitType{ 156 }; //Protoss_Pylon
+							}
+							else if (Broodwar->self()->getRace().getName() == "Zerg") {
+								supplyBuilding = UnitType{ 42 }; //Zerg_Overlord
+							}
+							// Confirming worker and structure
+							bw << "Worker Found: " << u->getType().getName() + std::to_string(u->getID()) << std::endl;
+							bw << "Desired Structure: " << supplyBuilding.getName() << std::endl;
+							// Terran and Protoss construction
+							if (Broodwar->self()->getRace().getName() != "Zerg") {
+								if (u->build(supplyBuilding, futureBuildingPos)) {
+									bw << "Building being constructed" << std::endl;
+								}
+								else {
+									bw << "Command Failed to Execute" << std::endl;
+								}
+							}
+							// Zerg Construction
+							else {
+								if (u->morph(supplyBuilding)) {
+									bw << "Larva being morphed" << std::endl;
+								}
+								else {
+									bw << "Command Failed to Execute (2)" << std::endl;
+								}
+							}
+							break;
+						}
+						// deleting name string
+						u_name.clear();
+					}
+				}
+				// Cleaning up pointers, arrays, and strings
+				delete Reader1;
+				delete Reader2;
+				delete[] workerName;
+				delete[] xPos_c;
+				delete[] yPos_c;
+				xPos_s.clear();
+				yPos_s.clear();
+				// clearing the receiver buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Build unit to allow for basic ground troops (Terran_Barracks/Protoss_Warpgate/Zerg_Spawning_Pools)
+			else if (strncmp(buildGroundTroopBuilding, recvbuf, 27) == 0) {
+				//Setting up memory allocation and reading pointers
+				char workerName[30];
+				char xPos_c[10];
+				char yPos_c[10];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+
+				//Getting worker name (case sensitive)
+				int workerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < workerNameLength; i++) {
+					workerName[i] = *Reader1++;
+				}
+
+				bw << "Worker for construction: " << std::endl;
+				for (int i = 0; i < workerNameLength; i++) {
+					bw << workerName[i];
+				}
+				bw << std::endl;
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, space);
+
+				//Getting x tile position
+				int xPos_l = Reader2 - Reader1;
+				for (int i = 0; i < xPos_l; i++) {
+					xPos_c[i] = *Reader1++;
+				}
+
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+
+				//Getting y tile position
+				int yPos_l = Reader2 - Reader1;
+				for (int i = 0; i < yPos_l; i++) {
+					yPos_c[i] = *Reader1++;
+				}
+
+				// character arrays to strings
+				//std::string workerName_s = workerName;
+				std::string xPos_s = xPos_c;
+				std::string yPos_s = yPos_c;
+
+				// Giving Tile Position
+				bw << "Position for Ground Troop building" << std::endl;
+				bw << "X: " + xPos_s << std::endl;
+				bw << "Y: " + yPos_s << std::endl;
+
+				// Generate desired Tile Position
+				std::string::size_type sz;
+				TilePosition futureBuildingPos(std::stoi(xPos_s, &sz), std::stoi(yPos_s, &sz));
+				bw << "TilePosition: " << futureBuildingPos << std::endl;
+
+				//Preallocate a ground troop building type
+				UnitType groundTroopBuilding;
+				
+				for (auto u : Broodwar->self()->getUnits()) {
+					if (u->getType().isWorker()) {
+						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						if (strncmp(u_name.c_str(), workerName, workerNameLength) == 0) {
+							//Determine Race Specific Building Unit Type
+							if (Broodwar->self()->getRace().getName() == "Terran")
+							{
+								groundTroopBuilding = UnitType{ 111 }; //Terran_Barracks
+							}
+							else if (Broodwar->self()->getRace().getName() == "Protoss") {
+								groundTroopBuilding = UnitType{ 160 }; //Protoss_Gateway
+							}
+							else if (Broodwar->self()->getRace().getName() == "Zerg") {
+								groundTroopBuilding = UnitType{ 142 }; //Zerg_Spawning_Pool
+							}
+							// Confirming Worker and Structure
+							bw << "Worker Found: " << u->getType().getName() + std::to_string(u->getID()) << std::endl;
+							bw << "Desired Structure: " << groundTroopBuilding.getName() << std::endl;
+							// Conditional is ordering build, with confirmation/denial messages
+							if (u->build(groundTroopBuilding, futureBuildingPos)) {
+								bw << "Building being constructed" << std::endl;
+							}
+							else {
+								bw << "Command Failed to Execute" << std::endl;
+							}
+							break;
+						}
+						// clearing unit name;
+						u_name.clear();
+					}
+				}
+				// Pointer array, string cleanup
+				delete Reader1;
+				delete Reader2;
+				delete[] xPos_c;
+				delete[] yPos_c;
+				delete[] workerName;
+				xPos_s.clear();
+				yPos_s.clear();
+				// clearing the receiver buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Make a worker unit (Terran_SCV/Protoss_Probe/Zerg_Drone)
+			else if (strncmp(makeWorker, recvbuf, 10) == 0) {
+				//Setting up memory allocation and reading pointers
+				char trainerName[30];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, endComm);
+
+				//Getting worker name (case sensitive)
+				int trainerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < trainerNameLength; i++) {
+					trainerName[i] = *Reader1++;
+				}
+				// Cleaning up pointers
+				delete Reader1;
+				delete Reader2;
+				bw << "Source of Worker: ";
+				for (int i = 0; i < trainerNameLength; i++) {
+					bw << trainerName[i];
+				}
+				bw << std::endl;
+
+				UnitType workerType;
+				if (Broodwar->self()->getRace().getName() == "Terran") {
+					workerType = UnitType{ 7 }; //Terran_SCV
+				}
+				else if (Broodwar->self()->getRace().getName() == "Protoss") {
+					workerType = UnitType{ 64 }; //Protoss_Probe
+				}
+				else if (Broodwar->self()->getRace().getName() == "Zerg") {
+					workerType = UnitType{ 41 }; //Zerg_Drone
+				}
+
+				for (auto &u : Broodwar->self()->getUnits()) {
+					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
+						u->train(workerType);
+						bw << "Commanded worker to be trained" << std::endl;
+						break;
+					}
+				}
+				// Deleting character array
+				delete[] trainerName;
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			// Make a basic ground troop unit (Terran_Marine/Protoss_Zealot/Zerg_Zergling)
+			else if (strncmp(makeGroundTroop, recvbuf, 17) == 0) {
+				//Setting up memory allocation and reading pointers
+				char trainerName[30];
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, endComm);
+
+				//Getting worker name (case sensitive)
+				int trainerNameLength = Reader2 - Reader1;
+				for (int i = 0; i < trainerNameLength; i++) {
+					trainerName[i] = *Reader1++;
+				}
+
+				bw << "Source of Ground Troop: ";
+				for (int i = 0; i < trainerNameLength; i++) {
+					bw << trainerName[i];
+				}
+				bw << std::endl;
+
+				UnitType troopType;
+				if (Broodwar->self()->getRace().getName() == "Terran") {
+					troopType = UnitType{ 0 }; //Terran_Marine
+				}
+				else if (Broodwar->self()->getRace().getName() == "Protoss") {
+					troopType = UnitType{ 65 }; //Protoss_Zealot
+				}
+				else if (Broodwar->self()->getRace().getName() == "Zerg") {
+					troopType = UnitType{ 37 }; //Zerg_Zergling
+				}
+
+				bw << "Ground Troop Unit Selected: " << troopType.getName() << std::endl;
+
+				
+				for (auto &u : Broodwar->self()->getUnits()) {
+					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
+						if (u->getType().getName() == "Zerg") {
+							u->morph(troopType);
+						}
+						else {
+							u->train(troopType);
+						}
+						bw << "Commanded ground troop to be trained" << std::endl;
+						break;
+					}
+				}
+				// Cleanup
+				delete Reader1;
+				delete Reader2;
+				delete[] trainerName;
+				memset(recvbuf, 0, sizeof(recvbuf));
 			}
 
+			//Sending Failure
+			if (iSendResult == SOCKET_ERROR) {
+				bw << "send failed with error: " << WSAGetLastError() << std::endl;
+				closesocket(ClientSocket);
+				WSACleanup();
+				return;
+			}
+			else {}
+			// Processing commands from Icarus
 			bw << "Bytes sent: " << iSendResult << std::endl;
 		}
 		else if (iResult == 0) {
 			bw << "Connection closing ... " << std::endl;
 		}
-		else
+		//recv Error
+		else 
 		{
 			bw << "recv failed with error: " << WSAGetLastError() << std::endl;
 			closesocket(ClientSocket);
 			WSACleanup();
 			return;
-		}
+		} 
 	} while (iResult > 0);
 	bw << "TCP Heartbeat" << std::endl;
 
@@ -211,9 +1012,6 @@ static void startServer(GameWrapper& bw)
 	WSACleanup();
 }
 //End TCP server (CHOI)
-//BWEM Add-on
-namespace { auto & theMap = BWEM::Map::Instance(); }
-//End BWEM Add-on
 
 void ExampleAIModule::onStart()
 {
@@ -223,8 +1021,8 @@ void ExampleAIModule::onStart()
 		// Hello World!
 		Broodwar->sendText("Initializing ICARUS connector ... ");//Choi modification of hello world
 
-		// Print the map name.
-		// BWAPI returns std::string when retrieving a string, don't forget to add .c_str() when printing!
+																 // Print the map name.
+																 // BWAPI returns std::string when retrieving a string, don't forget to add .c_str() when printing!
 		Broodwar << "The map is " << Broodwar->mapName() << "!" << std::endl;
 
 		// Enable the UserInput flag, which allows us to control the bot and type messages.
@@ -288,18 +1086,18 @@ void ExampleAIModule::onStart()
 
 void ExampleAIModule::onEnd(bool isWinner)
 {
-  // Called when the game ends
-  if ( isWinner )
-  {
-    // Log your win here!
-  }
-  server->join();
-  delete server;
+	// Called when the game ends
+	if (isWinner)
+	{
+		// Log your win here!
+	}
+	server->join();
+	delete server;
 }
 
 void ExampleAIModule::onFrame()
 {
-  // Called once every game frame
+	// Called once every game frame
 
 	//BWEM Add-on and try-catch
 	try {
@@ -345,6 +1143,7 @@ void ExampleAIModule::onFrame()
 
 
 			// If the unit is a worker unit
+			/*
 			if (u->getType().isWorker())
 			{
 				// if our worker is idle
@@ -358,7 +1157,7 @@ void ExampleAIModule::onFrame()
 					}
 					else if (!u->getPowerUp())  // The worker cannot harvest anything if it
 					{                             // is carrying a powerup such as a flag
-					  // Harvest from the nearest mineral patch or gas refinery
+												  // Harvest from the nearest mineral patch or gas refinery
 						if (!u->gather(u->getClosestUnit(IsMineralField || IsRefinery)))
 						{
 							// If the call fails, then print the last error message
@@ -369,6 +1168,7 @@ void ExampleAIModule::onFrame()
 				} // closure: if idle
 
 			}
+			
 			else if (u->getType().isResourceDepot()) // A resource depot is a Command Center, Nexus, or Hatchery
 			{
 
@@ -384,7 +1184,7 @@ void ExampleAIModule::onFrame()
 						nullptr,    // condition
 						Broodwar->getLatencyFrames());  // frames to run
 
-// Retrieve the supply provider type in the case that we have run out of supplies
+														// Retrieve the supply provider type in the case that we have run out of supplies
 					UnitType supplyProviderType = u->getType().getRace().getSupplyProvider();
 					static int lastChecked = 0;
 
@@ -417,7 +1217,7 @@ void ExampleAIModule::onFrame()
 										nullptr,  // condition
 										supplyProviderType.buildTime() + 100);  // frames to run
 
-				// Order the builder to construct the supply structure
+																				// Order the builder to construct the supply structure
 									supplyBuilder->build(supplyProviderType, targetBuildLocation);
 								}
 							}
@@ -431,7 +1231,7 @@ void ExampleAIModule::onFrame()
 				} // closure: failed to train idle unit
 
 			}
-
+			*/
 		} // closure: unit iterator
 	}
 	catch (const std::exception & e)
@@ -446,44 +1246,44 @@ void ExampleAIModule::onSendText(std::string text)
 	BWEM::utils::MapDrawer::ProcessCommand(text);
 	//End BWEM Add-on
 
-  // Send the text to the game if it is not being processed.
-  Broodwar->sendText("%s", text.c_str());
+	// Send the text to the game if it is not being processed.
+	Broodwar->sendText("%s", text.c_str());
 
 
-  // Make sure to use %s and pass the text as a parameter,
-  // otherwise you may run into problems when you use the %(percent) character!
+	// Make sure to use %s and pass the text as a parameter,
+	// otherwise you may run into problems when you use the %(percent) character!
 
 }
 
 void ExampleAIModule::onReceiveText(BWAPI::Player player, std::string text)
 {
-  // Parse the received text
-  Broodwar << player->getName() << " said \"" << text << "\"" << std::endl;
+	// Parse the received text
+	Broodwar << player->getName() << " said \"" << text << "\"" << std::endl;
 }
 
 void ExampleAIModule::onPlayerLeft(BWAPI::Player player)
 {
-  // Interact verbally with the other players in the game by
-  // announcing that the other player has left.
-  Broodwar->sendText("Goodbye %s!", player->getName().c_str());
+	// Interact verbally with the other players in the game by
+	// announcing that the other player has left.
+	Broodwar->sendText("Goodbye %s!", player->getName().c_str());
 }
 
 void ExampleAIModule::onNukeDetect(BWAPI::Position target)
 {
 
-  // Check if the target is a valid position
-  if ( target )
-  {
-    // if so, print the location of the nuclear strike target
-    Broodwar << "Nuclear Launch Detected at " << target << std::endl;
-  }
-  else 
-  {
-    // Otherwise, ask other players where the nuke is!
-    Broodwar->sendText("Where's the nuke?");
-  }
+	// Check if the target is a valid position
+	if (target)
+	{
+		// if so, print the location of the nuclear strike target
+		Broodwar << "Nuclear Launch Detected at " << target << std::endl;
+	}
+	else
+	{
+		// Otherwise, ask other players where the nuke is!
+		Broodwar->sendText("Where's the nuke?");
+	}
 
-  // You can also retrieve all the nuclear missile targets using Broodwar->getNukeDots()!
+	// You can also retrieve all the nuclear missile targets using Broodwar->getNukeDots()!
 }
 
 void ExampleAIModule::onUnitDiscover(BWAPI::Unit unit)
@@ -504,17 +1304,17 @@ void ExampleAIModule::onUnitHide(BWAPI::Unit unit)
 
 void ExampleAIModule::onUnitCreate(BWAPI::Unit unit)
 {
-  if ( Broodwar->isReplay() )
-  {
-    // if we are in a replay, then we will print out the build order of the structures
-    if ( unit->getType().isBuilding() && !unit->getPlayer()->isNeutral() )
-    {
-      int seconds = Broodwar->getFrameCount()/24;
-      int minutes = seconds/60;
-      seconds %= 60;
-      Broodwar->sendText("%.2d:%.2d: %s creates a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
-    }
-  }
+	if (Broodwar->isReplay())
+	{
+		// if we are in a replay, then we will print out the build order of the structures
+		if (unit->getType().isBuilding() && !unit->getPlayer()->isNeutral())
+		{
+			int seconds = Broodwar->getFrameCount() / 24;
+			int minutes = seconds / 60;
+			seconds %= 60;
+			Broodwar->sendText("%.2d:%.2d: %s creates a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
+		}
+	}
 }
 
 void ExampleAIModule::onUnitDestroy(BWAPI::Unit unit)
@@ -534,17 +1334,17 @@ void ExampleAIModule::onUnitDestroy(BWAPI::Unit unit)
 
 void ExampleAIModule::onUnitMorph(BWAPI::Unit unit)
 {
-  if ( Broodwar->isReplay() )
-  {
-    // if we are in a replay, then we will print out the build order of the structures
-    if ( unit->getType().isBuilding() && !unit->getPlayer()->isNeutral() )
-    {
-      int seconds = Broodwar->getFrameCount()/24;
-      int minutes = seconds/60;
-      seconds %= 60;
-      Broodwar->sendText("%.2d:%.2d: %s morphs a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
-    }
-  }
+	if (Broodwar->isReplay())
+	{
+		// if we are in a replay, then we will print out the build order of the structures
+		if (unit->getType().isBuilding() && !unit->getPlayer()->isNeutral())
+		{
+			int seconds = Broodwar->getFrameCount() / 24;
+			int minutes = seconds / 60;
+			seconds %= 60;
+			Broodwar->sendText("%.2d:%.2d: %s morphs a %s", minutes, seconds, unit->getPlayer()->getName().c_str(), unit->getType().c_str());
+		}
+	}
 }
 
 void ExampleAIModule::onUnitRenegade(BWAPI::Unit unit)
@@ -553,7 +1353,7 @@ void ExampleAIModule::onUnitRenegade(BWAPI::Unit unit)
 
 void ExampleAIModule::onSaveGame(std::string gameName)
 {
-  Broodwar << "The game was saved to \"" << gameName << "\"" << std::endl;
+	Broodwar << "The game was saved to \"" << gameName << "\"" << std::endl;
 }
 
 void ExampleAIModule::onUnitComplete(BWAPI::Unit unit)
