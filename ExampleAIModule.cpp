@@ -52,6 +52,7 @@ static void startServer(GameWrapper& bw)
 	//Unit Commands
 	char* moveto = "moveto";
 	char* gather = "gather";
+	char* attack = "attack";
 	//Building Constructors
 	char* buildGasHarvester = "build_gas_harvester";
 	char* buildAdditionalSupply = "build_additional_supply";
@@ -165,11 +166,12 @@ static void startServer(GameWrapper& bw)
 						bw << p->getName() << ", playing as " << p->getRace() << std::endl;
 					}
 					if (Broodwar->self()->getName() == p->getName()) {
-						percepts += "(self " + p->getName() + " race " + p->getRace().getName()
+						percepts += "(self (" + p->getName() + ") race " + p->getRace().getName()
 							+ " minerals " + std::to_string(p->minerals())
 							+ " gas " + std::to_string(p->gas())
 							+ " supply-limit " + std::to_string(p->supplyTotal())
-							+ " supply-used " + std::to_string(p->supplyUsed()) + ")\n";
+							+ " supply-used " + std::to_string(p->supplyUsed()) + 
+							+ " isVictorious " + std::to_string(p->isVictorious()) + ")\n";
 					}
 
 					Unitset playerUnits = p->getUnits();
@@ -195,6 +197,7 @@ static void startServer(GameWrapper& bw)
 								knownAreas.push_back(u_area->Id()); // Adds new area to list
 							}
 						}
+
 						//Match unit to type
 						if (u->getType().isMineralField())
 						{
@@ -219,7 +222,7 @@ static void startServer(GameWrapper& bw)
 						else if (u->getType().isBuilding())
 						{
 							percepts += "(building " + u->getType().getName() + std::to_string(u->getID())
-								+ " player " + p->getName() + " area" + std::to_string(u_area->Id())
+								+ " player (" + p->getName() + ") area" + std::to_string(u_area->Id())
 								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if ((Broodwar->self()->getName()) == (p->getName())) {
 								percepts += " assignment ";
@@ -234,7 +237,7 @@ static void startServer(GameWrapper& bw)
 								else if (u->isTraining()) {
 									percepts += "(";
 									auto t = u->getTrainingQueue();
-									for (int i = 0; i < t.size(); i++) {
+									for (unsigned int i = 0; i < t.size(); i++) {
 										percepts += t[i].getName();
 										if (i < t.size() - 1) {
 											percepts += " ";
@@ -250,8 +253,8 @@ static void startServer(GameWrapper& bw)
 						}
 						else if (u->getType().isRobotic())
 						{
-							percepts += "(robotic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
-								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							percepts += "(robotic " + u->getType().getName() + std::to_string(u->getID()) + " player (" + p->getName()
+								+ ") area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if ((Broodwar->self()->getName()) == (p->getName())) {
 								percepts += " assignment ";
 								if (u->isIdle()) {
@@ -276,8 +279,8 @@ static void startServer(GameWrapper& bw)
 						}
 						else if (u->getType().isOrganic())
 						{
-							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player " + p->getName()
-								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player (" + p->getName()
+								+ ") area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if (Broodwar->self()->getName() == p->getName()) {
 								percepts += " assignment ";
 								if (u->isIdle()) {
@@ -334,7 +337,10 @@ static void startServer(GameWrapper& bw)
 								}
 							}
 							if (knownAreaFlag) {
-								percepts += "(ChokePoint CP" + std::to_string(cp->Index()) + " A1 Area" + std::to_string(cp_areas.first->Id())
+								WalkPosition cpPos = cp->Center();
+								percepts += "(ChokePoint CP" + std::to_string(cp->Index())
+									+ " x " + std::to_string(cpPos.x /4) + " y " + std::to_string(cpPos.y /4) //Going from Walk to Tile
+									+ " A1 Area" + std::to_string(cp_areas.first->Id())
 									+ " A2 Area" + std::to_string(cp_areas.second->Id()) + " Access ";
 								if ((cp->IsPseudo()) == false) {
 									percepts += "Open)\n";                     //if chokepoint is open
@@ -344,6 +350,8 @@ static void startServer(GameWrapper& bw)
 									Unit b_unit = blocker->Unit();           //Going from BWEM to BWAPI classes
 									UnitType b_UnitType = blocker->Type();
 									std::string b_ID = std::to_string(b_unit->getID());
+									percepts += b_UnitType.getName();
+									/*
 									if (blocker->IsMineral() != nullptr) {
 										percepts += " mineral";
 									}
@@ -365,6 +373,7 @@ static void startServer(GameWrapper& bw)
 									else if (b_UnitType.isPowerup()) {
 										percepts += " powerup";
 									}
+									*/
 									percepts += b_ID + ")\n";
 								}
 							}
@@ -379,7 +388,8 @@ static void startServer(GameWrapper& bw)
 			else if (strncmp(moveto, recvbuf, 6) == 0) {
 				//Processing command
 				char targetName[30];
-				char posName[30];
+				char xpos_c[4];
+				char ypos_c[4];
 				char *Reader1 = strpbrk(recvbuf,space);
 				char *Reader2 = strpbrk(++Reader1,space);
 				int targetNameLen = Reader2 - Reader1;
@@ -389,20 +399,55 @@ static void startServer(GameWrapper& bw)
 					targetName[i] = *Reader1++;
 				}
 				Reader1 = Reader2 + 1;
-				Reader2 = strpbrk(Reader1, endComm);
-				int posNameLen = Reader2 - Reader1;
-				for (int i = 0; i < posNameLen; i++) {
-					posName[i] = *Reader1++;
+				Reader2 = strpbrk(Reader1, space);
+				int xpos_cLen = Reader2 - Reader1;
+				for (int i = 0; i < xpos_cLen; i++) {
+					xpos_c[i] = *Reader1++;
 				}
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+				int ypos_cLen = Reader2 - Reader1;
+				for (int i = 0; i < ypos_cLen; i++) {
+					ypos_c[i] = *Reader1++;
+				}
+				std::string xpos_s = xpos_c;
+				std::string ypos_s = ypos_c;
+				std::string::size_type sz;
+				int p_x = std::stoi(xpos_s, &sz);
+				int p_y = std::stoi(ypos_s, &sz);
+				BWAPI::TilePosition p_desired = BWAPI::Point<int, TILEPOSITION_SCALE>(p_x, p_y);
+				for (auto u : Broodwar->self()->getUnits()) {
+					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					int u_nameLength = u_name.length();
+					if (u_nameLength == targetNameLen) {
+						if (strncmp(u_name.c_str(), targetName, targetNameLen) == 0) {
+							u->move(BWAPI::Point<int, 1>(p_x*TILEPOSITION_SCALE, p_y*TILEPOSITION_SCALE));
+							break;
+						}
+					}
+				}
+				//Debugging text
+				/*
 				bw << "(Moveto ";
 				for (int i = 0; i < targetNameLen; i++) {
 					bw << targetName[i];
 				} 
-				bw << " ";
-				for (int i = 0; i < posNameLen; i++) {
-					bw << posName[i];
+				bw << " x ";
+				for (int i = 0; i < xpos_cLen; i++) {
+					bw << xpos_c[i];
+				}
+				bw << " y ";
+				for (int i = 0; i < ypos_cLen; i++) {
+					bw << ypos_c[i];
 				}
 				bw << ") Command Recieved" << std::endl;
+				bw << "Unit Selected: ";
+				for (int i = 0; i < targetNameLen; i++) {
+					bw << targetName[i];
+				}
+				bw << std::endl;
+				bw << "Tile Position: " << p_desired << std::endl;
+				*/
 				//Confirming on LISP Terminal
 				char* confMT = "(Moveto Command Recieved)/n";
 				int confMT_len = strlen(confMT);
@@ -420,7 +465,7 @@ static void startServer(GameWrapper& bw)
 				char *Reader2 = strpbrk(++Reader1, space);
 
 				//Getting worker name (case sensitive)
-				int workerNameLength = Reader2 - Reader1-2;
+				int workerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < workerNameLength; i++) {
 					workerName[i] = *Reader1++;
 				}
@@ -438,12 +483,12 @@ static void startServer(GameWrapper& bw)
 				bool resourceFound = false;
 				
 				// Debugging text
-				/*
+				
 				bw << "Looking for: ";
 				for (int i = 0; i < workerNameLength; i++) {
 					bw << workerName[i];
 				}
-				bw << std::endl;*/
+				bw << std::endl;
 				// Iterate through ICARUS's units
 				for (auto u : Broodwar->self()->getUnits()) {
 					// finding workers
@@ -527,16 +572,17 @@ static void startServer(GameWrapper& bw)
 							}
 							// Vespene Gas Option
 							else if(strncmp(resourceName,vespene_ptr,vespene_l) == 0){
-								/*for (auto &r : Broodwar->getGeysers()) {
+								for (auto &r : Broodwar->getGeysers()) {
 									std::string r_name = r->getType().getName() + std::to_string(r->getID());
 									if (strncmp(r_name.c_str(), resourceName, resourceNameLength) == 0) {
 										resourceFound = true;
 										u->gather(r);
 										break;
 									}
-								}*/
+								}
 							}
 							//Debugging text
+							/*
 							if (!resourceFound) {
 								bw << "Looked for: ";
 								for (int i = 0; i < resourceNameLength; i++) {
@@ -548,6 +594,7 @@ static void startServer(GameWrapper& bw)
 							else {
 								bw << "Resource was found" << std::endl;
 							}
+							*/
 							break;
 						}
 					}
@@ -563,11 +610,12 @@ static void startServer(GameWrapper& bw)
 					}
 				}
 				// Cleaning up pointers and arrays
+				/*
 				delete Reader1;
 				delete Reader2;
 				delete[] workerName;
 				delete[] resourceID_c;
-				delete[] resourceName;
+				delete[] resourceName;*/
 				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
@@ -658,13 +706,14 @@ static void startServer(GameWrapper& bw)
 					}
 				}
 				// Cleaning up pointers, arrays, and strings
+				/*
 				delete Reader1;
 				delete Reader2;
 				delete[] workerName;
 				delete[] xPos_c;
 				delete[] yPos_c;
 				xPos_s.clear();
-				yPos_s.clear();
+				yPos_s.clear();*/
 				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
@@ -767,14 +816,6 @@ static void startServer(GameWrapper& bw)
 						u_name.clear();
 					}
 				}
-				// Cleaning up pointers, arrays, and strings
-				delete Reader1;
-				delete Reader2;
-				delete[] workerName;
-				delete[] xPos_c;
-				delete[] yPos_c;
-				xPos_s.clear();
-				yPos_s.clear();
 				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
@@ -866,14 +907,6 @@ static void startServer(GameWrapper& bw)
 						u_name.clear();
 					}
 				}
-				// Pointer array, string cleanup
-				delete Reader1;
-				delete Reader2;
-				delete[] xPos_c;
-				delete[] yPos_c;
-				delete[] workerName;
-				xPos_s.clear();
-				yPos_s.clear();
 				// clearing the receiver buffer
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
@@ -913,12 +946,12 @@ static void startServer(GameWrapper& bw)
 					std::string u_name = u->getType().getName() + std::to_string(u->getID());
 					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
 						u->train(workerType);
-						bw << "Commanded worker to be trained" << std::endl;
+						bw << "Sent command for worker to be trained" << std::endl;
 						break;
 					}
 				}
 				// Deleting character array
-				delete[] trainerName;
+				//delete[] trainerName;
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
 			// Make a basic ground troop unit (Terran_Marine/Protoss_Zealot/Zerg_Zergling)
@@ -968,12 +1001,98 @@ static void startServer(GameWrapper& bw)
 					}
 				}
 				// Cleanup
+				/*
 				delete Reader1;
 				delete Reader2;
-				delete[] trainerName;
+				delete[] trainerName;*/
 				memset(recvbuf, 0, sizeof(recvbuf));
 			}
+			// Attack a different troop
+			else if (strncmp(attack, recvbuf, 6) == 0){
+				
+				//Debugging text
+				bw << "Inside attack command\n" << std::endl;
 
+				//preallocating char blocks for unit names
+				char playerUnit[30];
+				char enemyUnit[30];
+
+				//Reading through Player's unit
+				bw << "Player unit: ";
+				char *Reader1 = strpbrk(recvbuf, space);
+				char *Reader2 = strpbrk(++Reader1, space);
+				int playerUnitNameLength = Reader2 - Reader1;
+				for (int i = 0; i < playerUnitNameLength; i++) {
+					playerUnit[i] = *Reader1++;
+					bw << playerUnit[i];
+				}
+
+				//Reading through Enemy's unit
+				bw << "\nEnemy unit: ";
+				Reader1 = Reader2 + 1;
+				Reader2 = strpbrk(Reader1, endComm);
+				int enemyUnitNameLength = Reader2 - Reader1;
+				for (int i = 0; i < enemyUnitNameLength; i++) {
+					enemyUnit[i] = *Reader1++;
+					bw << enemyUnit[i];
+				}
+				bw << " Length of " << std::to_string(enemyUnitNameLength) << std::endl;
+
+				//Getting enemy unit pointer
+				bool enemyUnitFound = false;
+				PositionOrUnit enemyUnitPoU = PositionOrUnit(nullptr);
+				for (auto p : Broodwar -> getPlayers()) {
+					if ( (!(p->isAlly(Broodwar -> self()))) && (p != (Broodwar ->self())) ) {
+						for (auto e : p->getUnits()) {
+							//bw << "\tUnit: " + e->getType().getName() + std::to_string(e->getID()) << std::endl;
+							std::string e_name = e->getType().getName() + std::to_string(e->getID());
+							int e_nameLength = e_name.length();
+							//bw << std::to_string(e_nameLength) << " ";
+							if (e_nameLength == enemyUnitNameLength) {
+								bw << e_name << std::endl;
+								if (strncmp(e_name.c_str(), enemyUnit, enemyUnitNameLength) == 0) {
+									bw << "Found enemy unit" << std::endl;
+									enemyUnitFound = true;
+									enemyUnitPoU = e; //assignment operator over for UnitCommand
+								}
+							}
+							if (enemyUnitFound) { break; }
+						}
+					}
+					if (enemyUnitFound) { break; }
+				}
+
+				if (!enemyUnitFound) { bw << "Enemy unit not found" << std::endl; }
+
+				if (enemyUnitFound) {
+					bw << "Looking for player's unit" << std::endl;
+					//iterating through player units to execute unitcommand
+					for (auto u : Broodwar->self()->getUnits()) {
+						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						int u_nameLength = u_name.length();
+						if (u_nameLength == playerUnitNameLength) {
+							if (strncmp(u_name.c_str(), playerUnit, playerUnitNameLength) == 0) {
+								bw << "Player unit found" << std::endl;
+								u->attack(enemyUnitPoU, true);//Shift queue
+								break;
+							}
+						}
+					}
+				}
+
+				//Wiping reciever buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
+			//No command found
+			else{
+				char* Reader = strpbrk(recvbuf, 0);
+				int messageLen = Reader - recvbuf;
+				bw << "Messge recieved:\n";
+				for (int i = 0; i < messageLen; i++) { bw << recvbuf[i]; }
+				bw << std::endl;
+				//Wiping reciever buffer
+				memset(recvbuf, 0, sizeof(recvbuf));
+			}
 			//Sending Failure
 			if (iSendResult == SOCKET_ERROR) {
 				bw << "send failed with error: " << WSAGetLastError() << std::endl;
