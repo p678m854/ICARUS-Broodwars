@@ -15,6 +15,8 @@
 #include "ExampleAIModule.h"
 #include "BWEM/src/bwem.h" //BWEM header
 #include <iostream>
+#include <cctype>
+#include <algorithm>
 
 #pragma comment (lib, "Ws2_32.lib")
 
@@ -61,9 +63,9 @@ static void startServer(GameWrapper& bw)
 	char* makeWorker = "make_worker";
 	char* makeGroundTroop = "make_ground_troop";
 	//Resources
-	char mineral[] = "mineral";
+	char mineral[] = "RESOURCE_MINERAL_FIELD";
 	char* mineral_ptr = mineral;
-	char vespene[] = "resource_vespene_geyser";
+	char vespene[] = "RESOURCE_VESPENEGEYSER";
 	char* vespene_ptr = vespene;
 	//TCP deliminators
 	char* space = " ";
@@ -71,7 +73,7 @@ static void startServer(GameWrapper& bw)
 
 	// Message Lengths
 	const int mineral_l = sizeof(mineral)-2;
-	const int vespene_l = sizeof(vespene);
+	const int vespene_l = sizeof(vespene)-2;
 	const int buildGasHarvester_l = sizeof(buildGasHarvester) - 2;
 	const int makeWorker_l = sizeof(makeWorker) - 2;
 
@@ -165,12 +167,16 @@ static void startServer(GameWrapper& bw)
 					if (!p->isObserver()) {
 						bw << p->getName() << ", playing as " << p->getRace() << std::endl;
 					}
+					std::string playerName = p->getName();
+					playerName.erase(std::remove(playerName.begin(), playerName.end(), ' '),
+						playerName.end());
+
 					if (Broodwar->self()->getName() == p->getName()) {
-						percepts += "(self (" + p->getName() + ") race " + p->getRace().getName()
+						percepts += "(self " + playerName + " race " + p->getRace().getName()
 							+ " minerals " + std::to_string(p->minerals())
 							+ " gas " + std::to_string(p->gas())
-							+ " supply-limit " + std::to_string(p->supplyTotal())
-							+ " supply-used " + std::to_string(p->supplyUsed()) + 
+							+ " supply-limit " + std::to_string((p->supplyTotal())/2) //Adjust for supply visible on SC for humans
+							+ " supply-used " + std::to_string((p->supplyUsed())/2)
 							+ " isVictorious " + std::to_string(p->isVictorious()) + ")\n";
 					}
 
@@ -199,12 +205,7 @@ static void startServer(GameWrapper& bw)
 						}
 
 						//Match unit to type
-						if (u->getType().isMineralField())
-						{
-							percepts += "(mineral mineral" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
-								+ " area area" + std::to_string(u_area->Id()) + ")\n";
-						}
-						else if (u->getType().isAddon())
+						if (u->getType().isAddon())
 						{
 							percepts += "(addon add" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
 								+ " area area" + std::to_string(u_area->Id()) + ")\n";
@@ -214,7 +215,7 @@ static void startServer(GameWrapper& bw)
 							percepts += "(beacon beacon" + std::to_string(u->getID()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y)
 								+ " area area" + std::to_string(u_area->Id()) + ")\n";
 						}
-						else if (u->getType().isNeutral())
+						else if (u->getType().isNeutral()) //Vespene gas and minerals
 						{
 							percepts += "(neutral " + u->getType().getName() + std::to_string(u->getID())
 								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y) + " area area" + std::to_string(u_area->Id()) + ")\n";
@@ -222,17 +223,15 @@ static void startServer(GameWrapper& bw)
 						else if (u->getType().isBuilding())
 						{
 							percepts += "(building " + u->getType().getName() + std::to_string(u->getID())
-								+ " player (" + p->getName() + ") area" + std::to_string(u_area->Id())
+								+ " player " + playerName + " area" + std::to_string(u_area->Id())
 								+ " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if ((Broodwar->self()->getName()) == (p->getName())) {
 								percepts += " assignment ";
-								if (u->isIdle()) {
-									if(!u->isCompleted()){
-										percepts += "under-construction";
-									}
-									else {
-										percepts += "idle";
-									}
+								if (u->isBeingConstructed()) {
+									percepts += "under-construction";
+								}
+								else if (u->isIdle()) {
+									percepts += "idle";
 								}
 								else if (u->isTraining()) {
 									percepts += "(";
@@ -253,55 +252,96 @@ static void startServer(GameWrapper& bw)
 						}
 						else if (u->getType().isRobotic())
 						{
-							percepts += "(robotic " + u->getType().getName() + std::to_string(u->getID()) + " player (" + p->getName()
-								+ ") area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							percepts += "(robotic " + u->getType().getName() + std::to_string(u->getID()) + " player " + playerName
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if ((Broodwar->self()->getName()) == (p->getName())) {
 								percepts += " assignment ";
-								if (u->isIdle()) {
+								if (u->isBeingConstructed()) {
+									percepts += "under-construction";
+								}
+								else if (u->isIdle()) {
 									percepts += "idle";
 								}
 								else {
+									bool unfoundTask = true;
 									if (u->getType().isWorker()) {
-										if (u->getBuildType().getName() == "None") {
-											percepts += "gathering-resources";
-										}
-										else {
+										if (u->getBuildType().getName() != "None") {
 											percepts += "constructing-";
 											percepts += u->getBuildType().getName();
+											unfoundTask = false;
+										}
+										std::string workerOrder = u->getOrder().getName();
+										if ((workerOrder == "MoveToGas") || (workerOrder == "WaitForGas") ||
+											(workerOrder == "HarvestGas") || (workerOrder == "ReturnGas"))
+										{
+											percepts += "gatherVespeneGas";
+											unfoundTask = false;
+										}
+										if ((workerOrder == "MoveToMinerals") || (workerOrder == "WaitForMinerals")
+											|| (workerOrder == "MiningMinerals") || (workerOrder == "ReturnMinerals"))
+										{
+											percepts += "gatherMinerals";
+											unfoundTask = false;
 										}
 									}
-									else {
-										percepts += "busy";
+									if (u->isMorphing())
+									{
+										percepts += "morphing";
+										unfoundTask = false;
 									}
+									if (u->isUpgrading()) {
+										percepts += "upgrading";
+										unfoundTask = false;
+									}
+									if (unfoundTask) { percepts += "busy"; }
 								}
 							}
 							percepts += ")\n";
 						}
 						else if (u->getType().isOrganic())
 						{
-							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player (" + p->getName()
-								+ ") area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
+							percepts += "(organic " + u->getType().getName() + std::to_string(u->getID()) + " player " + playerName
+								+ " area area" + std::to_string(u_area->Id()) + " x " + std::to_string(tpos.x) + " y " + std::to_string(tpos.y);
 							if (Broodwar->self()->getName() == p->getName()) {
 								percepts += " assignment ";
-								if (u->isIdle()) {
+								if (u->isBeingConstructed()) {
+									percepts += "under-construction";
+								}
+								else if (u->isIdle()) {
 									percepts += "idle";
 								}
 								else {
+									bool unfoundTask = true;
 									if (u->getType().isWorker()) {
-										if (u->getBuildType().getName() == "None") {
-											percepts += "gathering-resources";
-										}
-										else {
+										if (u->getBuildType().getName() != "None") {
 											percepts += "constructing-";
 											percepts += u->getBuildType().getName();
+											unfoundTask = false;
+										}
+										std::string workerOrder = u->getOrder().getName();
+										if ((workerOrder == "MoveToGas")|| (workerOrder == "WaitForGas")||
+											(workerOrder == "HarvestGas")||(workerOrder == "ReturnGas"))
+										{
+											percepts += "gatherVespeneGas";
+											unfoundTask = false;
+										}
+										if ((workerOrder == "MoveToMinerals") || (workerOrder == "WaitForMinerals")
+											|| (workerOrder == "MiningMinerals") || (workerOrder == "ReturnMinerals"))
+										{
+											percepts += "gatherMinerals";
+											unfoundTask = false;
 										}
 									}
-									else if (u->isMorphing()) {
+									if (u->isMorphing()) 
+									{
 										percepts += "morphing";
+										unfoundTask = false;
 									}
-									else {
-										percepts += "busy";
+									if (u->isUpgrading()) { 
+										percepts += "upgrading"; 
+										unfoundTask = false;
 									}
+									if(unfoundTask) {percepts += "busy";}
 								}
 							}
 							percepts += ")\n";
@@ -396,7 +436,7 @@ static void startServer(GameWrapper& bw)
 				//std::cout << "Length of Target Name: " << targetNameLen << std::endl;
 				for (int i = 0; i < targetNameLen; i++)
 				{
-					targetName[i] = *Reader1++;
+					targetName[i] = toupper(*Reader1++);
 				}
 				Reader1 = Reader2 + 1;
 				Reader2 = strpbrk(Reader1, space);
@@ -418,6 +458,7 @@ static void startServer(GameWrapper& bw)
 				BWAPI::TilePosition p_desired = BWAPI::Point<int, TILEPOSITION_SCALE>(p_x, p_y);
 				for (auto u : Broodwar->self()->getUnits()) {
 					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 					int u_nameLength = u_name.length();
 					if (u_nameLength == targetNameLen) {
 						if (strncmp(u_name.c_str(), targetName, targetNameLen) == 0) {
@@ -467,7 +508,7 @@ static void startServer(GameWrapper& bw)
 				//Getting worker name (case sensitive)
 				int workerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < workerNameLength; i++) {
-					workerName[i] = *Reader1++;
+					workerName[i] = toupper(*Reader1++);
 				}
 				Reader1 = Reader2 + 1;
 				Reader2 = strpbrk(Reader1, endComm);
@@ -475,7 +516,7 @@ static void startServer(GameWrapper& bw)
 
 				//Getting resource name (necessary to lowercase?)
 				for (int i = 0; i < resourceNameLength; i++) {
-					resourceName[i] = tolower(*Reader1++);
+					resourceName[i] = toupper(*Reader1++);
 				}
 
 				//Flags for finding workers and resources
@@ -495,6 +536,7 @@ static void startServer(GameWrapper& bw)
 					if (u->getType().isWorker())
 					{
 						std::string w_name = u->getType().getName() + std::to_string(u->getID());
+						std::transform(w_name.begin(), w_name.end(), w_name.begin(), ::toupper);
 						if (strncmp(w_name.c_str(),workerName,workerNameLength) == 0)
 						{
 							bw << "Found Worker Unit " << w_name << std::endl;
@@ -504,7 +546,7 @@ static void startServer(GameWrapper& bw)
 								bw << resourceName[i];
 							}
 							bw << std::endl;
-
+							/*
 							bool mineral_f;
 							// Is resource a mineral?
 							if (strncmp(mineral_ptr, resourceName, mineral_l) == 0) {
@@ -514,7 +556,7 @@ static void startServer(GameWrapper& bw)
 								mineral_f = false;
 							}
 							//Debugging text output:
-							/*bw << "MINERAL(?): ";
+							bw << "MINERAL(?): ";
 							if (mineral_f) {
 								bw << "TRUE";
 							}
@@ -523,7 +565,7 @@ static void startServer(GameWrapper& bw)
 							}
 							bw << std::endl;*/
 							//Mineral Option
-							if(mineral_f)
+							/*if(mineral_f)
 							{
 								int id_counter = 0;// Counter to see how long the ID at the end of resource is
 								while (isdigit(resourceName[mineral_l+id_counter+1]))
@@ -535,6 +577,7 @@ static void startServer(GameWrapper& bw)
 								for (auto &r : Broodwar->getMinerals()){
 									int r_ID = r->getID(); //Get id of mineral
 									std::string r_name_ID = std::to_string(r_ID); //String of ID to compare to TCP result
+									std::transform(r_name_ID.begin(), r_name_ID.end(), r_name_ID.begin(), ::toupper);
 									int num_digits;//How many digits (base 10) are being checked
 									if (r_ID != 0) {
 										num_digits = ceil(log10(r_ID));//Get digits if ID isn't zero
@@ -563,17 +606,42 @@ static void startServer(GameWrapper& bw)
 												u->gather(r);//Execute the command (desired_worker -> gather(desired_resource)
 											}
 										}
+
 										// The resouce has been found
 										if (resourceFound) {
 											break; // Stop Iterating through the loop
 										}
 									}
 								}
+							}*/
+							if ((strncmp(resourceName, mineral_ptr, mineral_l) == 0)) {
+								for (auto &r : Broodwar->getNeutralUnits()) {
+									std::string r_name = r->getType().getName() + std::to_string(r->getID());
+									std::transform(r_name.begin(), r_name.end(), r_name.begin(), ::toupper);
+									if (strncmp(r_name.c_str(), resourceName, resourceNameLength) == 0) {
+										resourceFound = true;
+										u->gather(r);
+										break;
+									}
+								}
 							}
+							else { //Should be a refinery for gas
+								for (auto &r : Broodwar->self()->getUnits()) {
+									std::string r_name = r->getType().getName() + std::to_string(r->getID());
+									std::transform(r_name.begin(), r_name.end(), r_name.begin(), ::toupper);
+									if (strncmp(r_name.c_str(), resourceName, resourceNameLength) == 0) {
+										resourceFound = true;
+										u->gather(r);
+										break;
+									}
+								}
+							}
+							/*
 							// Vespene Gas Option
 							else if(strncmp(resourceName,vespene_ptr,vespene_l) == 0){
 								for (auto &r : Broodwar->getGeysers()) {
 									std::string r_name = r->getType().getName() + std::to_string(r->getID());
+									std::transform(r_name.begin(), r_name.end(), r_name.begin(), ::toupper);
 									if (strncmp(r_name.c_str(), resourceName, resourceNameLength) == 0) {
 										resourceFound = true;
 										u->gather(r);
@@ -631,7 +699,7 @@ static void startServer(GameWrapper& bw)
 				//Getting worker name (case sensitive)
 				int workerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < workerNameLength; i++) {
-					workerName[i] = *Reader1++;
+					workerName[i] = toupper(*Reader1++);
 				}
 
 				bw << "Worker for construction: " << std::endl;
@@ -678,6 +746,7 @@ static void startServer(GameWrapper& bw)
 				for (auto u : Broodwar->self()->getUnits()) {
 					if (u->getType().isWorker()) {
 						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 						if (strncmp(u_name.c_str(),workerName,workerNameLength) == 0) {
 							//Determine Race Specific Building Unit Type
 							if (Broodwar->self()->getRace().getName() == "Terran")
@@ -729,7 +798,7 @@ static void startServer(GameWrapper& bw)
 				//Getting worker name (case sensitive)
 				int workerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < workerNameLength; i++) {
-					workerName[i] = *Reader1++;
+					workerName[i] = toupper(*Reader1++);
 				}
 
 				bw << "Worker for construction: " << std::endl;
@@ -777,6 +846,7 @@ static void startServer(GameWrapper& bw)
 				for (auto u : Broodwar->self()->getUnits()) {
 					if (u->getType().isWorker() || (u->getType().getName() == "Zerg_Larva")) {
 						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 						if (strncmp(u_name.c_str(), workerName, workerNameLength) == 0) {
 							//Determine Race Specific Building Unit Type
 							if (Broodwar->self()->getRace().getName() == "Terran")
@@ -831,7 +901,7 @@ static void startServer(GameWrapper& bw)
 				//Getting worker name (case sensitive)
 				int workerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < workerNameLength; i++) {
-					workerName[i] = *Reader1++;
+					workerName[i] = toupper(*Reader1++);
 				}
 
 				bw << "Worker for construction: " << std::endl;
@@ -879,6 +949,7 @@ static void startServer(GameWrapper& bw)
 				for (auto u : Broodwar->self()->getUnits()) {
 					if (u->getType().isWorker()) {
 						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 						if (strncmp(u_name.c_str(), workerName, workerNameLength) == 0) {
 							//Determine Race Specific Building Unit Type
 							if (Broodwar->self()->getRace().getName() == "Terran")
@@ -920,7 +991,7 @@ static void startServer(GameWrapper& bw)
 				//Getting worker name (case sensitive)
 				int trainerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < trainerNameLength; i++) {
-					trainerName[i] = *Reader1++;
+					trainerName[i] = toupper(*Reader1++);
 				}
 				// Cleaning up pointers
 				delete Reader1;
@@ -944,6 +1015,7 @@ static void startServer(GameWrapper& bw)
 
 				for (auto &u : Broodwar->self()->getUnits()) {
 					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
 						u->train(workerType);
 						bw << "Sent command for worker to be trained" << std::endl;
@@ -964,7 +1036,7 @@ static void startServer(GameWrapper& bw)
 				//Getting worker name (case sensitive)
 				int trainerNameLength = Reader2 - Reader1;
 				for (int i = 0; i < trainerNameLength; i++) {
-					trainerName[i] = *Reader1++;
+					trainerName[i] = toupper(*Reader1++);
 				}
 
 				bw << "Source of Ground Troop: ";
@@ -989,6 +1061,7 @@ static void startServer(GameWrapper& bw)
 				
 				for (auto &u : Broodwar->self()->getUnits()) {
 					std::string u_name = u->getType().getName() + std::to_string(u->getID());
+					std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 					if (strncmp(u_name.c_str(), trainerName, trainerNameLength) == 0) {
 						if (u->getType().getName() == "Zerg") {
 							u->morph(troopType);
@@ -1023,7 +1096,7 @@ static void startServer(GameWrapper& bw)
 				char *Reader2 = strpbrk(++Reader1, space);
 				int playerUnitNameLength = Reader2 - Reader1;
 				for (int i = 0; i < playerUnitNameLength; i++) {
-					playerUnit[i] = *Reader1++;
+					playerUnit[i] = toupper(*Reader1++);
 					bw << playerUnit[i];
 				}
 
@@ -1033,7 +1106,7 @@ static void startServer(GameWrapper& bw)
 				Reader2 = strpbrk(Reader1, endComm);
 				int enemyUnitNameLength = Reader2 - Reader1;
 				for (int i = 0; i < enemyUnitNameLength; i++) {
-					enemyUnit[i] = *Reader1++;
+					enemyUnit[i] = toupper(*Reader1++);
 					bw << enemyUnit[i];
 				}
 				bw << " Length of " << std::to_string(enemyUnitNameLength) << std::endl;
@@ -1046,6 +1119,7 @@ static void startServer(GameWrapper& bw)
 						for (auto e : p->getUnits()) {
 							//bw << "\tUnit: " + e->getType().getName() + std::to_string(e->getID()) << std::endl;
 							std::string e_name = e->getType().getName() + std::to_string(e->getID());
+							std::transform(e_name.begin(), e_name.end(), e_name.begin(), ::toupper);
 							int e_nameLength = e_name.length();
 							//bw << std::to_string(e_nameLength) << " ";
 							if (e_nameLength == enemyUnitNameLength) {
@@ -1069,6 +1143,7 @@ static void startServer(GameWrapper& bw)
 					//iterating through player units to execute unitcommand
 					for (auto u : Broodwar->self()->getUnits()) {
 						std::string u_name = u->getType().getName() + std::to_string(u->getID());
+						std::transform(u_name.begin(), u_name.end(), u_name.begin(), ::toupper);
 						int u_nameLength = u_name.length();
 						if (u_nameLength == playerUnitNameLength) {
 							if (strncmp(u_name.c_str(), playerUnit, playerUnitNameLength) == 0) {
